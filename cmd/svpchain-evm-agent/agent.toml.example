@@ -1,0 +1,43 @@
+# svpchain-evm-agent configuration.
+#
+# The EVM binary shares the full agent's schema (internal/config); families it
+# does not register — perps trading, Lendora — are simply ignored if
+# configured. dex_chain.evm_rpc_url is REQUIRED here (the binary refuses to
+# boot without it). Use a DISTINCT operator key per binary: the agent id
+# derives from the key and self-registration hashes this binary's own card.
+
+listen_addr = ":8083"
+# How callers reach this agent; advertised in the Agent Card.
+public_url  = "http://localhost:8083"
+
+[dex_chain]
+id               = "svpchain-testnet-1"
+grpc_addr        = "127.0.0.1:9090"
+comet_rpc_url    = "http://127.0.0.1:26657"
+indexer_base_url = "http://127.0.0.1:3002"
+# Required for this binary.
+evm_rpc_url      = "http://127.0.0.1:8545"
+
+# Swap building (UniswapV2Router02 + wrapped native). Both-or-neither;
+# unset, the swap tools refuse at call time.
+#[evm.swap]
+#uniswap_router_addr = "0x…"
+#wsvp_addr           = "0x…"
+
+# Bridge deposits. All three together; unset, the bridge tools refuse.
+#[evm.bridge]
+#addr            = "0x…"
+#routes_path     = "routes.json"
+#source_chain_id = 1234
+
+# Optional testnet faucet backend; unset, the faucet tools refuse.
+#faucet_base_url = "http://127.0.0.1:8088"
+
+# Operator key for on-chain self-registration and SVP-DT settlement
+# (delegated EVM writes are future work). Optional: without it the
+# svpchain-execution skill refuses with a reason.
+# The SVPCHAIN_AGENT_OPERATOR_KEY env var takes precedence over key_file.
+#[operator]
+#key_file     = "operator.key"
+#capabilities = ["evm.swap", "evm.bridge", "evm.tokens"]
+#metadata     = "svpchain EVM DeFi agent"
