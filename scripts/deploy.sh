@@ -46,7 +46,7 @@
 #   --operator-key-file <path>     LOCAL hex eth_secp256k1 key, shipped 0600
 #                                  beside the config. Unset → keyless, and the
 #                                  execution skills refuse with a reason.
-#   --operator-capabilities <csv>  Default "trading".
+#   --operator-capabilities <csv>  Default "evm.swap,evm.bridge,evm.tokens".
 #   --operator-metadata <text>
 #
 # The EVM surface (this agent's whole point):
@@ -109,7 +109,7 @@ agent_chain_id="${SVPCHAIN_AGENT_CHAIN_ID:-}"
 agent_chain_rest="${SVPCHAIN_AGENT_CHAIN_REST:-}"
 public_url="${SVPCHAIN_AGENT_PUBLIC_URL:-https://agent-testnet.svpchain.org}"
 operator_key_file="${SVPCHAIN_AGENT_OPERATOR_KEY_FILE:-}"
-operator_capabilities="trading"
+operator_capabilities="evm.swap,evm.bridge,evm.tokens"
 operator_metadata=""
 evm_rpc="${SVPCHAIN_EVM_RPC:-http://127.0.0.1:8545}"
 evm_uniswap_router="${SVPCHAIN_EVM_UNISWAP_ROUTER:-0xFe7bf2DFd5CB268C6779f1F614638a436Cb701e4}"
