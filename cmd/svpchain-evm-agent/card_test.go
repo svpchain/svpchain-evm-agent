@@ -10,10 +10,10 @@ import (
 
 	"github.com/svpchain/svpchain-mcp/lib/mcp/tools"
 
-	"github.com/svpchain/svpchain-agent-core/a2aserver"
-	"github.com/svpchain/svpchain-agent-core/agentchain"
-	"github.com/svpchain/svpchain-agent-core/toolbridge"
-	"github.com/svpchain/svpchain-agent-core/wire"
+	"github.com/svpchain/svpchain-evm-agent/internal/a2aserver"
+	"github.com/svpchain/svpchain-evm-agent/internal/agentchain"
+	"github.com/svpchain/svpchain-evm-agent/internal/toolbridge"
+	"github.com/svpchain/svpchain-evm-agent/internal/wire"
 )
 
 // ★ The card this agent serves is hashed into its on-chain registration, and a

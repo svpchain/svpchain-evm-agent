@@ -1,10 +1,10 @@
 # svpchain-evm-agent configuration.
 #
-# The schema is svpchain-agent-core/config, shared with the sibling agents;
-# keys this profile does not use are ignored.
-# dex_chain.evm_rpc_url is REQUIRED here (the binary refuses to
-# boot without it). Use a DISTINCT operator key per binary: the agent id
-# derives from the key and self-registration hashes this binary's own card.
+# The schema is internal/config. Unknown keys are ignored rather than rejected,
+# so a config still carrying keys for surfaces this agent does not serve loads
+# fine. dex_chain.evm_rpc_url is REQUIRED here (the binary refuses to boot
+# without it). Use a DISTINCT operator key per binary: the agent id derives from
+# the key and self-registration hashes this binary's own card.
 
 listen_addr = ":8083"
 # How callers reach this agent; advertised in the Agent Card.

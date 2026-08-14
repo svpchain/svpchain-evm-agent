@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/svpchain/svpchain-agent-core/config"
+	"github.com/svpchain/svpchain-evm-agent/internal/config"
 )
 
 // scripts/deploy.sh renders this agent's agent.toml itself. This pins the two

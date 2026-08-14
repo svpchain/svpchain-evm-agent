@@ -282,7 +282,7 @@ emit_operator_capabilities() {
 #
 # listen_addr is always 0.0.0.0:<port> inside the container; --network host
 # means that's also the host-bound port. The optional blocks mirror
-# svpchain-agent-core/config exactly: unset keys → those operations refuse at
+# internal/config exactly: unset keys → those operations refuse at
 # call time. The EVM blocks are this agent's surface — wire.EVMProfile sets
 # BuildEVM, so core builds the swap, oracle and bridge deps from them. There is
 # no [evm.lendora] here: that one is gated on BuildLendora, which this profile
@@ -325,7 +325,7 @@ EOF
     echo "rest_url = \"${agent_chain_rest}\""
   fi
   # Per-protocol contract bindings on the DEX chain's EVM side; each family
-  # renders only when configured, mirroring core's optionality.
+  # renders only when configured, mirroring internal/config's optionality.
   if [[ -n "$evm_uniswap_router" ]]; then
     echo ""
     echo "[evm.swap]"
@@ -366,7 +366,7 @@ EOF
     [[ -n "$daily_withdraw_cap" ]] && echo "daily_withdraw_cap_usdc = ${daily_withdraw_cap}"
   fi
   # The operator key turns this agent's delegated execution on. key_file is
-  # left relative ("operator.key") on purpose — svpchain-agent-core/config
+  # left relative ("operator.key") on purpose — internal/config
   # resolves it against the agent.toml directory, so it points at the file
   # mounted beside the config.
   if [[ -n "$operator_key" ]]; then

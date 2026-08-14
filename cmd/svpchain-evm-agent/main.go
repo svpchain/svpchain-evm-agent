@@ -5,8 +5,9 @@
 // settlement) when an operator key is configured. Delegated EVM writes are
 // future work; all builds are caller-signed.
 //
-// It is the EVM-category slice of the full-surface svpchain-remote-agents; the
-// perps and Lendora families live in their own binaries.
+// Everything it serves is implemented under internal/, which was the shared
+// svpchain-agent-core library until that repo was retired. The perps and
+// Lendora families live in their own binaries.
 package main
 
 import (
@@ -17,9 +18,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/svpchain/svpchain-agent-core/a2aserver"
-	"github.com/svpchain/svpchain-agent-core/config"
-	"github.com/svpchain/svpchain-agent-core/wire"
+	"github.com/svpchain/svpchain-evm-agent/internal/a2aserver"
+	"github.com/svpchain/svpchain-evm-agent/internal/config"
+	"github.com/svpchain/svpchain-evm-agent/internal/wire"
 )
 
 func main() {

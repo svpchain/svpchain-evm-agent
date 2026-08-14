@@ -1,6 +1,6 @@
 package main
 
-import "github.com/svpchain/svpchain-agent-core/a2aserver"
+import "github.com/svpchain/svpchain-evm-agent/internal/a2aserver"
 
 // identity is this agent's public face: the name, version, and description its
 // Agent Card advertises.

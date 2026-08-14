@@ -9,10 +9,10 @@ chain's `x/agent` /
 `x/agentwallet` modules, and the SVP-DT execution core — identity,
 self-registration, and settlement.
 
-Everything above is implemented in
-[`svpchain-agent-core`](https://github.com/svpchain/svpchain-agent-core); this
-repo composes it — `wire.EVMProfile` selects the operation families, and
-`card.go` declares this agent's public identity.
+Everything above is implemented under `internal/`, which was the shared
+`svpchain-agent-core` library until that repo was retired and folded in here.
+`cmd/svpchain-evm-agent` composes it — `wire.EVMProfile` selects the operation
+families, and `card.go` declares this agent's public identity.
 
 | | |
 |---|---|
@@ -86,16 +86,25 @@ The served card's bytes are hashed into this agent's on-chain registration, and
 verifiers recompute that hash from a live fetch. `card.go` is therefore
 load-bearing: change it and every deployment must run `agent_self_update`.
 `cmd/svpchain-evm-agent/testdata/card.json` is a golden that makes such a
-change deliberate rather than accidental — including when core is upgraded.
+change deliberate rather than accidental — including when the skill text under
+`internal/a2aserver` changes, which moves the card just as surely.
 
 ## Development
 
 `GOWORK=off` is set in every Makefile target. A `go.work` in the parent
-directory resolves `svpchain-agent-core` from a local checkout, which is
-convenient for cross-repo work but would otherwise hide a missing `go get` bump
-and ship against an untagged core.
+directory would resolve dependencies from sibling checkouts rather than the
+versions `go.mod` pins — convenient for cross-repo work, but it can ship a build
+against a revision no tag points at.
 
 The build needs the chain's protocol module at `../svpagent/protocol` (a go.mod
-`replace`), which is also why the Docker build vendors first. `deps_test.go`
-asserts this repo's replace directives still match core's — drift there fails
-loudly instead of resolving upstream cosmos and erroring somewhere unrelated.
+`replace`), which is also why the Docker build vendors first. Because Go does
+not apply a dependency's own `replace` directives, this `go.mod` must restate
+every one of protocol's verbatim; `deps_test.go` diffs the two on every
+`go test ./...`, so drift fails loudly instead of resolving upstream cosmos and
+erroring somewhere unrelated.
+
+`internal/` is the former `svpchain-agent-core`, vendored in when that repo was
+retired and pruned to this binary's surface. The Lendora surface went with it; the perps
+families remain in `internal/toolbridge` but are deliberately unregistered,
+because the shared dispatch and delegated-read tests exercise the credential
+machinery through them and the delegated read layer covers only account tools.
