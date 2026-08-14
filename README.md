@@ -38,7 +38,13 @@ go run ./cmd/svpchain-evm-agent -config cmd/svpchain-evm-agent/agent.toml
 ```
 
 Inspect without touching anything: `--print-config`, `--print-compose`,
-`--print-nginx`, `--dry-run`. Tear down with `--uninstall`.
+`--print-nginx`, `--print-routes`, `--dry-run`. Tear down with `--uninstall`.
+
+`--help` lists every flag. This is the agent that serves the bridge, so the
+deploy also ships the route registry beside `agent.toml`: core loads it at
+startup, and a configured bridge with no registry is a boot failure rather than
+a call-time refusal. `--print-routes` shows what would ship;
+`--evm-bridge-routes-src` replaces it with your own file.
 
 ## Behind the reverse proxy
 

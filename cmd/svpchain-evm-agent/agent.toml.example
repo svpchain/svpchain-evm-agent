@@ -1,8 +1,8 @@
 # svpchain-evm-agent configuration.
 #
-# The EVM binary shares the full agent's schema (internal/config); families it
-# does not register — perps trading, Lendora — are simply ignored if
-# configured. dex_chain.evm_rpc_url is REQUIRED here (the binary refuses to
+# The schema is svpchain-agent-core/config, shared with the sibling agents;
+# keys this profile does not use are ignored.
+# dex_chain.evm_rpc_url is REQUIRED here (the binary refuses to
 # boot without it). Use a DISTINCT operator key per binary: the agent id
 # derives from the key and self-registration hashes this binary's own card.
 

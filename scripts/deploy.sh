@@ -3,21 +3,26 @@
 # scripts/deploy.sh — install the svpchain evm agent onto a remote SSH host
 # as a docker container.
 #
-# This agent serves the evm slice of the SVP-Chain A2A surface on
-# :8082, advertised at <public-url>/evm. It is deployed independently: its
+# This agent serves the EVM DeFi slice of the SVP-Chain A2A surface on
+# :8083, advertised at <public-url>/evm. It is deployed independently: its
 # sibling agents (the other three) each own their own repo and script,
 # so nothing here knows or cares about them.
 #
 # Flow: build (vendored, so the go.mod replace to ../svpagent/protocol never
-# leaves the operator) → docker save (cached by image id) → rsync the tar +
-# agent.toml (+ operator.key at 0600 when given) + docker-compose.yml to
-# ~/svpchain-evm-agent → docker load → docker compose up -d → smoke-test
-# /healthz and the agent card over loopback.
+# leaves the operator) → docker save (cached by image id) → rsync one staging
+# dir (agent.toml, docker-compose.yml, routes.json, operator.key at 0600 when
+# given) plus the image tar to ~/svpchain-evm-agent → docker load → docker
+# compose up -d → smoke-test /healthz and the agent card over loopback.
+#
+# The bridge route registry rides along: this is the agent that serves the
+# bridge, and core loads routes.json at startup — a missing or unroutable
+# registry is a boot failure, not a call-time refusal.
 #
 # The operator key turns delegated execution on. It must be DISTINCT from every
 # other agent's: an agent's on-chain id derives from its key and
 # agent_self_register publishes a hash of this binary's own card, so a shared
-# key makes two agents collide on one registry record.
+# key makes two agents collide on one registry record. With the agents in
+# separate repos nothing here can check that; it is an operational rule.
 #
 # The remote needs only docker + the compose v2 plugin reachable by the ssh
 # user without sudo. Auth state is in-memory, so a redeploy wipes it; the
@@ -26,15 +31,55 @@
 # Required:
 #   --host user@hostname           SSH target.            SVPCHAIN_DEPLOY_HOST
 #
-# Common options (run --help for the full list — chain endpoints, EVM family,
-# faucet, limits, bridge routes):
+# Chain endpoints:
+#   --chain-id <id>                SVPCHAIN_CHAIN_ID     (svp-2517-1)
+#   --grpc-addr <host:port>        SVPCHAIN_GRPC_ADDR    (127.0.0.1:9090)
+#   --comet-rpc <url>              SVPCHAIN_COMET_RPC    (http://127.0.0.1:26657)
+#   --indexer <url>                SVPCHAIN_INDEXER      (http://127.0.0.1:3002)
+#   --agent-chain-id <id>          Optional separate x/agent + x/agentwallet
+#   --agent-chain-rest <url>       chain over its Cosmos REST API. Both or
+#                                  neither; unset, those families run against
+#                                  the DEX chain connection.
+#
+# Identity and execution:
 #   --public-url <url>             Base URL; this agent advertises <base>/evm.
 #   --operator-key-file <path>     LOCAL hex eth_secp256k1 key, shipped 0600
 #                                  beside the config. Unset → keyless, and the
 #                                  execution skills refuse with a reason.
+#   --operator-capabilities <csv>  Default "trading".
+#   --operator-metadata <text>
+#
+# The EVM surface (this agent's whole point):
+#   --evm-rpc <url>                The chain's EVM JSON-RPC. Required to boot.
+#   --evm-uniswap-router <addr>    Swap router; with --evm-wsvp.
+#   --evm-wsvp <addr>              Wrapped SVP, the swap rail's base asset.
+#   --evm-oracle <addr>            Price feed for get_oracle_price.
+#   --evm-bridge-addr <addr>       SVPBridge on this chain. Needs the routes
+#                                  registry and the source chain id.
+#   --evm-bridge-routes <path>     Registry path in the container. RELATIVE
+#                                  (default routes.json) → generated and
+#                                  shipped beside agent.toml; ABSOLUTE →
+#                                  operator-managed, not shipped.
+#   --evm-bridge-routes-src <path> Ship this file instead of the generated one.
+#   --evm-bridge-source-chain-id   This chain's id in the registry (2517).
+#   --evm-foreign-chains <triples> ";"-separated chainId,rpcUrl,bridgeAddr.
+#
+# Optional families and tuning:
+#   --faucet-url <url>             Empty → the faucet skills refuse.
+#   --markets-refresh <dur>        Default 30s.
+#   --deposit-max-usdc <n>         Caps on funds movements, in human USDC;
+#   --withdraw-max-usdc <n>        unset → no cap.
+#   --transfer-max-usdc <n>
+#   --daily-withdraw-cap-usdc <n>
+#
+# Build and placement:
 #   --image-tag <tag>              Default <git-short-sha>.
+#   --platform <p>                 Default linux/amd64.
+#   --skip-build                   Reuse the local image.
 #   --install-dir <path>           Default ~/svpchain-evm-agent on remote.
-#   --print-config / --print-compose / --print-routes / --print-nginx
+#
+# Modes:
+#   --print-config / --print-compose / --print-nginx / --print-routes
 #   --dry-run / --uninstall
 #
 # Examples:
@@ -53,7 +98,7 @@ fail() { printf "  ${C_RED}✗${C_RESET} %s\n" "$*" >&2; exit 1; }
 
 # ---- args ------------------------------------------------------------------
 
-mode="install"        # install | uninstall | print-config | print-compose | print-routes
+mode="install"        # install | uninstall | print-config | print-compose | print-nginx | print-routes
 
 host=""
 chain_id="${SVPCHAIN_CHAIN_ID:-svp-2517-1}"
@@ -62,24 +107,20 @@ comet_rpc="${SVPCHAIN_COMET_RPC:-http://127.0.0.1:26657}"
 indexer="${SVPCHAIN_INDEXER:-http://127.0.0.1:3002}"
 agent_chain_id="${SVPCHAIN_AGENT_CHAIN_ID:-}"
 agent_chain_rest="${SVPCHAIN_AGENT_CHAIN_REST:-}"
-listen_port="${SVPCHAIN_AGENT_LISTEN_PORT:-8081}"
 public_url="${SVPCHAIN_AGENT_PUBLIC_URL:-https://agent-testnet.svpchain.org}"
-key_dir="${SVPCHAIN_AGENT_KEY_DIR:-}"
 operator_key_file="${SVPCHAIN_AGENT_OPERATOR_KEY_FILE:-}"
 operator_capabilities="trading"
 operator_metadata=""
-print_agent="svpchain-evm-agent"  # which agent --print-config renders
 evm_rpc="${SVPCHAIN_EVM_RPC:-http://127.0.0.1:8545}"
-faucet_url="${SVPCHAIN_FAUCET_URL:-https://pre-faucet.svpchain.org}"
 evm_uniswap_router="${SVPCHAIN_EVM_UNISWAP_ROUTER:-0xFe7bf2DFd5CB268C6779f1F614638a436Cb701e4}"
 evm_wsvp="${SVPCHAIN_EVM_WSVP:-0x771a0a63D8198b7dbea4a16910ff68AB38006531}"
 evm_oracle="${SVPCHAIN_EVM_ORACLE:-0xAE351F2dF66DF1A7d2eB0D7574BcDb909E680B56}"
-evm_lendora_comptroller="${SVPCHAIN_EVM_LENDORA_COMPTROLLER:-0x0faBb2B5057b14224b04E4cbB217Dd6b275f75a7}"
 evm_bridge_addr="${SVPCHAIN_EVM_BRIDGE:-0x78Aca10afd5b28E838ECf0De20c5621CE39D9F4a}"
 evm_bridge_routes="${SVPCHAIN_EVM_BRIDGE_ROUTES:-routes.json}"
 evm_bridge_routes_src="${SVPCHAIN_EVM_BRIDGE_ROUTES_SRC:-}"
 evm_bridge_source_chain_id="${SVPCHAIN_EVM_BRIDGE_SOURCE_CHAIN_ID:-2517}"
 evm_foreign_chains="${SVPCHAIN_EVM_FOREIGN_CHAINS:-421614,https://sepolia-rollup.arbitrum.io/rpc,0xB6c74A758E3fA7bf57c22037821f7cA974d0CdfD;11155111,https://ethereum-sepolia-rpc.publicnode.com,0xb9a9937006E886F0Ec145a19634426300dD20a64}"
+faucet_url="${SVPCHAIN_FAUCET_URL:-https://pre-faucet.svpchain.org}"
 install_dir="~/svpchain-evm-agent"
 image_tag=""
 platform="linux/amd64"
@@ -90,8 +131,6 @@ daily_withdraw_cap=""
 markets_refresh="30s"
 skip_build="0"
 dry_run="0"
-bridge_routes_basename=""
-bridge_routes_src_abs=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -102,24 +141,20 @@ while [[ $# -gt 0 ]]; do
     --indexer)                indexer="$2";           shift 2 ;;
     --agent-chain-id)         agent_chain_id="$2";    shift 2 ;;
     --agent-chain-rest)       agent_chain_rest="$2";  shift 2 ;;
-    --listen-port)            listen_port="$2";       shift 2 ;;
     --public-url)             public_url="$2";        shift 2 ;;
-    --key-dir)                key_dir="$2";           shift 2 ;;
     --operator-key-file)      operator_key_file="$2"; shift 2 ;;
-    --print-agent)            print_agent="$2";       shift 2 ;;
     --operator-capabilities)  operator_capabilities="$2"; shift 2 ;;
     --operator-metadata)      operator_metadata="$2"; shift 2 ;;
     --evm-rpc)                evm_rpc="$2";           shift 2 ;;
-    --faucet-url)             faucet_url="$2";        shift 2 ;;
     --evm-uniswap-router)     evm_uniswap_router="$2"; shift 2 ;;
     --evm-wsvp)               evm_wsvp="$2";          shift 2 ;;
     --evm-oracle)             evm_oracle="$2";        shift 2 ;;
-    --evm-lendora-comptroller) evm_lendora_comptroller="$2"; shift 2 ;;
     --evm-bridge-addr)        evm_bridge_addr="$2";   shift 2 ;;
     --evm-bridge-routes)      evm_bridge_routes="$2"; shift 2 ;;
     --evm-bridge-routes-src)  evm_bridge_routes_src="$2"; shift 2 ;;
     --evm-bridge-source-chain-id) evm_bridge_source_chain_id="$2"; shift 2 ;;
     --evm-foreign-chains)     evm_foreign_chains="$2"; shift 2 ;;
+    --faucet-url)             faucet_url="$2";        shift 2 ;;
     --install-dir)            install_dir="$2";       shift 2 ;;
     --image-tag)              image_tag="$2";         shift 2 ;;
     --platform)               platform="$2";          shift 2 ;;
@@ -131,8 +166,8 @@ while [[ $# -gt 0 ]]; do
     --skip-build)             skip_build="1";         shift ;;
     --print-config)           mode="print-config";    shift ;;
     --print-compose)          mode="print-compose";   shift ;;
-    --print-routes)           mode="print-routes";    shift ;;
     --print-nginx)            mode="print-nginx";     shift ;;
+    --print-routes)           mode="print-routes";    shift ;;
     --dry-run)                dry_run="1";            shift ;;
     --uninstall)              mode="uninstall";       shift ;;
     -h|--help)
@@ -148,70 +183,59 @@ done
 # "<public_url>/invoke" join stays clean.
 public_url="${public_url%/}"
 
-# ---- the agents co-deployed on this host -----------------------------------
+# ---- this agent ------------------------------------------------------------
 #
-# One image (Dockerfile.agents) carries every binary; one container per agent,
-# This repo deploys exactly one agent; the others live in their own repos.
-# agent reads the same rendered family config (a binary that doesn't register a
-# family ignores its config), so the only per-agent differences are the port,
-# the advertised URL, and the operator key.
-#
-# AGENTS is also the deploy order: the research (intermediary) agent sits
-# before the perps agent, being the middle hop that re-delegates a narrowed
-# credential to a downstream agent (typically perps), which executes on the
-# original user's account. Each agent's short key name is what --key-dir looks
-# for (<short>.key).
-#
-# Between them these four cover the whole operation surface; a test in
-# internal/wire asserts no operation is lost to the split.
-AGENTS=(svpchain-evm-agent)
+# AGENT_PORT and AGENT_SEGMENT are the whole route contract, each stated once.
+# The port lands in listen_addr, in the nginx proxy_pass upstream and in the
+# smoke test; the segment lands in the advertised public_url and in the nginx
+# location. Two copies of either fact is how an agent ends up advertising a URL
+# that 404s with every process healthy and nothing in the logs, which is why
+# TestDeployScriptNginxRouteMatchesConfig pins the two renderers together by
+# cross-checking --print-config against --print-nginx.
+readonly AGENT_NAME="svpchain-evm-agent"
+readonly AGENT_PORT="8083"
+readonly AGENT_SEGMENT="evm"
+readonly IMAGE_REPO="ghcr.io/svpchain/svpchain-evm-agent"
 
-# Every agent this script has ever deployed, retired ones included. The cleanup
-# paths (uninstall, and the rm before compose up) iterate this rather than
-# AGENTS so a container left behind by an agent that has since been retired is
-# removed, instead of lingering on the host running a stale image — `docker
-# compose up` will not remove a service the file no longer defines.
-#
-# svpchain-remote-agents was the full-surface agent, retired once the category
-# agents covered its whole surface between them. Its entry stays until every
-# host that ran it has been redeployed at least once.
-KNOWN_AGENTS=("${AGENTS[@]}")
+# The advertised URL: the base plus this agent's segment — a reverse proxy
+# routes that path here. Computed once, after the trailing-slash strip, so the
+# config, the nginx block and the preflight banner cannot disagree.
+agent_public_url="${public_url}/${AGENT_SEGMENT}"
 
-# Static per-agent facts as case functions, not associative arrays: this script
-# must run on the macOS system bash 3.2, which predates `declare -A`.
-agent_port() {
-  case "$1" in
-    svpchain-evm-agent) echo 8083 ;;
-    *) echo "$listen_port" ;;
-  esac
-}
-agent_keyname() {
-  case "$1" in
-    svpchain-evm-agent) echo evm ;;
-    *) echo "$1" ;;
-  esac
-}
+# Absolute path to the local operator key file; empty means keyless. Set once
+# by resolve_operator_key, which every mode runs before rendering anything.
+operator_key=""
 
-# agent_active reports whether an agent is deployed this run. The research
-# agent signs the credentials it re-delegates, so it cannot run keyless: it is
-# included only when a research key is provided (--key-dir/research.key),
-# otherwise skipped so a keyless deploy of the service agents still works.
-agent_active() {
-  if [[ "$1" == "svpchain-research-agent" && -z "$(agent_key_src "$1")" ]]; then
-    return 1
-  fi
-  return 0
-}
-
-# Per-agent operator key path — a mutable map, stored as AGENT_KEY_<short>
-# shell vars (indirection via eval, since 3.2 has no associative arrays).
-# Empty means keyless. Distinct keys are mandatory when keyed: an agent's id
-# derives from its key and agent_self_register hashes that binary's own card,
-# so a shared key makes two agents fight over one on-chain record.
-set_agent_key() { eval "AGENT_KEY_$(agent_keyname "$1")=\"\$2\""; }
-agent_key_src() { eval "printf '%s' \"\${AGENT_KEY_$(agent_keyname "$1")-}\""; }
+# The route registry this deploy ships, if any. Set by resolve_bridge_routes:
+# basename is what gets mounted beside agent.toml, src_abs is a local override
+# from --evm-bridge-routes-src (empty → generate from render_routes_json).
+bridge_routes_basename=""
+bridge_routes_src_abs=""
 
 # ---- shared helpers -------------------------------------------------------
+
+# resolve_bridge_routes — decide whether this deploy ships a route registry.
+# A RELATIVE --evm-bridge-routes is a path inside the container, so the file is
+# generated (or taken from --evm-bridge-routes-src) and mounted beside
+# agent.toml; an ABSOLUTE one is operator-managed and left alone.
+#
+# Silent, and run before the print modes, so --print-compose previews the
+# routes mount the deploy actually creates rather than omitting it.
+resolve_bridge_routes() {
+  [[ -n "$evm_bridge_addr" && -n "$evm_bridge_routes" && -n "$evm_bridge_source_chain_id" ]] || return 0
+  case "$evm_bridge_routes" in
+    /*) return 0 ;;
+  esac
+  bridge_routes_basename="$(basename "$evm_bridge_routes")"
+  if [[ -n "$evm_bridge_routes_src" ]]; then
+    if [[ "$evm_bridge_routes_src" = /* ]]; then
+      bridge_routes_src_abs="$evm_bridge_routes_src"
+    else
+      bridge_routes_src_abs="$(pwd)/$evm_bridge_routes_src"
+    fi
+    [[ -f "$bridge_routes_src_abs" ]] || fail "--evm-bridge-routes-src '$bridge_routes_src_abs' was not found"
+  fi
+}
 
 # emit_foreign_chains — emit the [[evm.bridge.foreign_chain]] array-of-tables
 # parsed from evm_foreign_chains (";"-separated "chainId,rpcUrl,bridgeAddr"
@@ -252,41 +276,32 @@ emit_operator_capabilities() {
   printf '%s' "$out"
 }
 
-# render_agent_toml [name] [port] [public_url] [key_path] — emit one agent's
-# agent.toml on stdout. Every agent reads the same family config; only the
-# name (→ data path), port, advertised URL, and operator key vary. Both call
-# sites name an agent; the default is a fallback only.
-# listen_addr is always 0.0.0.0:<port> inside the
-# container; --network host means that's also the host-bound port. Optional
-# families mirror internal/config exactly: unset keys → those operations refuse
-# at call time.
+# render_agent_toml — emit this agent's agent.toml on stdout. Takes no
+# arguments on purpose: --print-config and the deploy render it the same way
+# from the same globals, so a preview is the file that ships.
+#
+# listen_addr is always 0.0.0.0:<port> inside the container; --network host
+# means that's also the host-bound port. The optional blocks mirror
+# svpchain-agent-core/config exactly: unset keys → those operations refuse at
+# call time. The EVM blocks are this agent's surface — wire.EVMProfile sets
+# BuildEVM, so core builds the swap, oracle and bridge deps from them. There is
+# no [evm.lendora] here: that one is gated on BuildLendora, which this profile
+# does not set, so the lending agent owns it.
 render_agent_toml() {
-  local name="${1:-svpchain-evm-agent}"
-  local port="${2:-$(agent_port "$name")}"
-  # Advertised URL: the base plus this agent's path segment (/research,
-  # /evm, /evm, /lending) — a reverse proxy routes each path to that agent.
-  local pub="${3:-${public_url}/$(agent_keyname "$name")}"
-  # A 4th arg (even empty) is authoritative — the ship loop passes each agent's
-  # key explicitly, including "" for a keyless one. With none, fall back to
-  # whatever --key-dir resolved for this agent, so --print-config previews the
-  # [operator] block exactly as the deploy would render it.
-  local keypath
-  if [[ $# -ge 4 ]]; then keypath="$4"; else keypath="$(agent_key_src "$name")"; fi
-
   cat <<EOF
 # Auto-generated by scripts/deploy.sh — do not edit by hand.
-# Agent: ${name}
+# Agent: ${AGENT_NAME}
 
-listen_addr      = "0.0.0.0:${port}"
-public_url       = "${pub}"
+listen_addr      = "0.0.0.0:${AGENT_PORT}"
+public_url       = "${agent_public_url}"
 broadcast_mode   = "server"
 EOF
   [[ -n "$faucet_url" ]] && echo "faucet_base_url         = \"${faucet_url}\""
-  # Persist per-symbol transfer-out caps on this agent's own writable data
-  # volume (the config dir holds only read-only mounts) — see
-  # render_compose_yaml. Per-agent so two co-deployed agents that both write
-  # caps never share a file between agents.
-  echo "transfer_out_cap_path   = \"/var/lib/${name}/transfer-out-caps.json\""
+  # Persist per-symbol transfer-out caps on the agent's own writable data
+  # volume (the config dir holds only read-only mounts) — the path is under the
+  # agent's name because that is what the compose service mounts
+  # ${install_dir}/data onto. See render_compose_yaml.
+  echo "transfer_out_cap_path   = \"/var/lib/${AGENT_NAME}/transfer-out-caps.json\""
   cat <<EOF
 
 [dex_chain]
@@ -295,6 +310,8 @@ grpc_addr        = "${grpc_addr}"
 comet_rpc_url    = "${comet_rpc}"
 indexer_base_url = "${indexer}"
 EOF
+  # Every family this binary serves lands as an EVM tx; main.go's
+  # cfg.RequireEVM refuses to boot without this endpoint.
   [[ -n "$evm_rpc" ]] && echo "evm_rpc_url      = \"${evm_rpc}\""
   # A separate chain carrying x/agent + x/agentwallet, reached over its
   # Cosmos REST API; unset, the agent-identity families run against the DEX
@@ -308,7 +325,7 @@ EOF
     echo "rest_url = \"${agent_chain_rest}\""
   fi
   # Per-protocol contract bindings on the DEX chain's EVM side; each family
-  # renders only when configured, mirroring internal/config's optionality.
+  # renders only when configured, mirroring core's optionality.
   if [[ -n "$evm_uniswap_router" ]]; then
     echo ""
     echo "[evm.swap]"
@@ -320,11 +337,10 @@ EOF
     echo "[evm.oracle]"
     echo "feed_addr = \"${evm_oracle}\""
   fi
-  if [[ -n "$evm_lendora_comptroller" ]]; then
-    echo ""
-    echo "[evm.lendora]"
-    echo "comptroller_addr = \"${evm_lendora_comptroller}\""
-  fi
+  # routes_path is left relative on purpose: core resolves it against the
+  # agent.toml directory, so it finds the registry mounted beside the config.
+  # Core loads it at startup and fails the boot if it is missing or has no
+  # route out of source_chain_id — which is why the deploy ships it.
   if [[ -n "$evm_bridge_addr" && -n "$evm_bridge_routes" && -n "$evm_bridge_source_chain_id" ]]; then
     echo ""
     echo "[evm.bridge]"
@@ -350,10 +366,10 @@ EOF
     [[ -n "$daily_withdraw_cap" ]] && echo "daily_withdraw_cap_usdc = ${daily_withdraw_cap}"
   fi
   # The operator key turns this agent's delegated execution on. key_file is
-  # left relative ("operator.key") on purpose — internal/config resolves it
-  # against the agent.toml directory, so it points at the file mounted beside
-  # the config.
-  if [[ -n "$keypath" ]]; then
+  # left relative ("operator.key") on purpose — svpchain-agent-core/config
+  # resolves it against the agent.toml directory, so it points at the file
+  # mounted beside the config.
+  if [[ -n "$operator_key" ]]; then
     cat <<EOF
 
 [operator]
@@ -398,52 +414,46 @@ render_routes_json() {
 ROUTES
 }
 
-# render_compose_yaml — emit the single docker-compose.yml that runs every
-# agent from the one shared image. One service per agent: same image, its own
-# command (which binary), config mount, data volume, and TCP port. Volumes use
-# absolute host paths so `docker compose up -d` works from any directory. Each
-# agent's files live under ${install_dir}/<name>/; its operator key and the
-# bridge routes (when present) are mounted read-only beside its config so the
-# config-dir-relative resolution finds them.
+# render_compose_yaml — emit the docker-compose.yml that runs this agent: the
+# image, its config mount, its data volume and its TCP port. Volumes use
+# absolute host paths so `docker compose up -d` works from any directory. The
+# rendered config, the operator key and the data volume live flat in
+# ${install_dir}; the key is mounted read-only beside the config so the
+# config-dir-relative key_file = "operator.key" resolves.
 render_compose_yaml() {
   echo "# Auto-generated by scripts/deploy.sh — do not edit by hand."
   echo "services:"
-  local name port cmd
-  for name in "${AGENTS[@]}"; do
-    agent_active "$name" || continue
-    port="$(agent_port "$name")"
-    # ★ ARGS ONLY — no binary path. This image declares
-    # ENTRYPOINT ["/bin/svpchain-evm-agent"], and compose `command:`
-    # overrides CMD, not ENTRYPOINT. Naming the binary here (as the old shared
-    # multi-binary image required, since it had no ENTRYPOINT) would launch
-    # `svpchain-evm-agent svpchain-evm-agent -config …` and die on flag
-    # parsing.
-    cmd="[\"-config\", \"/etc/${name}/agent.toml\"]"
-    cat <<EOF
-  ${name}:
+  # ★ ARGS ONLY — no binary path. This image declares
+  # ENTRYPOINT ["/bin/svpchain-evm-agent"], and compose `command:`
+  # overrides CMD, not ENTRYPOINT. Naming the binary here (as the old shared
+  # multi-binary image required, since it had no ENTRYPOINT) would launch
+  # `svpchain-evm-agent svpchain-evm-agent -config …` and die on flag
+  # parsing.
+  cat <<EOF
+  ${AGENT_NAME}:
     image: ${image_ref}
-    container_name: ${name}
+    container_name: ${AGENT_NAME}
     restart: unless-stopped
-    command: ${cmd}
-    # network_mode: host — the listener binds 0.0.0.0:${port} (compose
+    command: ["-config", "/etc/${AGENT_NAME}/agent.toml"]
+    # network_mode: host — the listener binds 0.0.0.0:${AGENT_PORT} (compose
     # \`ports:\` is ignored in host mode; the port lives in agent.toml).
     network_mode: host
     volumes:
-      - ${install_dir}/agent.toml:/etc/${name}/agent.toml:ro
-      - ${install_dir}/data:/var/lib/${name}
+      - ${install_dir}/agent.toml:/etc/${AGENT_NAME}/agent.toml:ro
+      - ${install_dir}/data:/var/lib/${AGENT_NAME}
 EOF
-    # Explicit ifs, not `[[ … ]] && echo`: a false test as the last command
-    # would make the function return non-zero, and under `set -e` the
-    # `render_compose_yaml > file` call site would exit the script silently.
-    if [[ -n "$(agent_key_src "$name")" ]]; then
-      echo "      - ${install_dir}/operator.key:/etc/${name}/operator.key:ro"
-    fi
-    # The bridge routes ride only with the evm agent, the one that serves the
-    # bridge; scoped rather than mounted everywhere to keep the mounts honest.
-    if [[ -n "$bridge_routes_basename" && "$name" == "svpchain-evm-agent" ]]; then
-      echo "      - ${install_dir}/${bridge_routes_basename}:/etc/${name}/${bridge_routes_basename}:ro"
-    fi
-  done
+  # An explicit if, not `[[ … ]] && echo`: a false test as the last command
+  # would make the function return non-zero, and under `set -e` the
+  # `render_compose_yaml > file` call site would exit the script silently.
+  if [[ -n "$operator_key" ]]; then
+    echo "      - ${install_dir}/operator.key:/etc/${AGENT_NAME}/operator.key:ro"
+  fi
+  # The route registry, mounted beside the config so the config-dir-relative
+  # routes_path resolves. Empty only when --evm-bridge-routes is absolute
+  # (operator-managed) or the bridge is unconfigured.
+  if [[ -n "$bridge_routes_basename" ]]; then
+    echo "      - ${install_dir}/${bridge_routes_basename}:/etc/${AGENT_NAME}/${bridge_routes_basename}:ro"
+  fi
 }
 
 require_install_args() {
@@ -456,51 +466,22 @@ validate_hex_key() {
     || fail "operator key '$1' does not look like a 32-byte hex key"
 }
 
-# resolve_operator_keys — find this agent's operator key, from
-# --operator-key-file or from --key-dir/<short>.key. Without one the agent runs
-# keyless: it advertises execution but refuses with a reason.
+# resolve_operator_key — find the operator key from --operator-key-file.
+# Without one the agent runs keyless: it advertises execution but refuses with
+# a reason. The path resolves against the operator's CWD, so this must run
+# before any cd.
 #
 # The key must be distinct from every other agent's — an agent's on-chain id
 # derives from it and agent_self_register hashes this binary's own card, so a
-# shared key makes two agents collide on one registry record. With the agents in
-# separate repos nothing can check that here; it is an operational rule.
-resolve_operator_keys() {
-  local name short src
-  if [[ -n "$operator_key_file" ]]; then
-    src="$operator_key_file"
-    [[ "$src" = /* ]] || src="$(pwd)/$src"
-    [[ -f "$src" ]] || fail "--operator-key-file '$src' was not found"
-    validate_hex_key "$src"
-    set_agent_key "${AGENTS[0]}" "$src"
-  fi
-  if [[ -n "$key_dir" ]]; then
-    for name in "${AGENTS[@]}"; do
-      short="$(agent_keyname "$name")"
-      src="${key_dir%/}/${short}.key"
-      [[ "$src" = /* ]] || src="$(pwd)/$src"
-      if [[ -f "$src" ]]; then
-        validate_hex_key "$src"
-        set_agent_key "$name" "$src"
-      fi
-    done
-  fi
-
-  # Distinct-key guard, by key content (not just path): the same key under two
-  # names is still one identity. Pairwise — there are only four agents.
-  local i j ni nj ci cj
-  for (( i = 0; i < ${#AGENTS[@]}; i++ )); do
-    ni="${AGENTS[$i]}"; ci="$(agent_key_src "$ni")"
-    [[ -n "$ci" ]] || continue
-    ci="$(tr -d '[:space:]' < "$ci")"
-    for (( j = i + 1; j < ${#AGENTS[@]}; j++ )); do
-      nj="${AGENTS[$j]}"; cj="$(agent_key_src "$nj")"
-      [[ -n "$cj" ]] || continue
-      cj="$(tr -d '[:space:]' < "$cj")"
-      if [[ "$ci" == "$cj" ]]; then
-        fail "agents ${ni} and ${nj} use the same operator key; each agent needs a DISTINCT key (its on-chain id derives from the key and agent_self_register hashes that binary's own card, so a shared key makes them fight over one record)"
-      fi
-    done
-  done
+# shared key makes two agents collide on one registry record. With the agents
+# in separate repos nothing can check that here; it is an operational rule.
+resolve_operator_key() {
+  [[ -n "$operator_key_file" ]] || return 0
+  local src="$operator_key_file"
+  [[ "$src" = /* ]] || src="$(pwd)/$src"
+  [[ -f "$src" ]] || fail "--operator-key-file '$src' was not found"
+  validate_hex_key "$src"
+  operator_key="$src"
 }
 
 # resolve_remote_install_dir — expand a leading ~ in $install_dir to the
@@ -579,32 +560,28 @@ load_if_missing() {
 #
 # The path convention is that each agent hangs off one base host at its own
 # segment (/perps, /evm, /lending, /research) while listening on its own local
-# port. That mapping lives in exactly two places: agent_keyname for the segment
-# and agent_port for the port — the same two functions that build public_url and
-# the compose port, so a route printed here cannot disagree with what deployed.
+# port. That mapping lives in exactly two constants — AGENT_SEGMENT and
+# AGENT_PORT, the same two that build public_url and the listener — so a route
+# printed here cannot disagree with what deployed.
 #
 # Nothing installs this. The server block it belongs in owns TLS and the base
 # host, which are outside this repo and shared with agents this repo must not
 # know about; four scripts racing to edit one nginx file is how you get a
 # half-written config on reload. Print it, review it, paste it.
 render_nginx_conf() {
-  local name="${1:-${AGENTS[0]}}"
-  local seg port
-  seg="$(agent_keyname "$name")"
-  port="$(agent_port "$name")"
   cat <<EOF
-# ${name} — generated by scripts/deploy.sh --print-nginx
+# ${AGENT_NAME} — generated by scripts/deploy.sh --print-nginx
 # Paste into the server block for $(printf '%s' "${public_url#*://}"), then
 # \`nginx -t && systemctl reload nginx\`.
 
-# Bare /${seg} would 404: the location below only matches the trailing slash.
-location = /${seg} { return 301 /${seg}/; }
+# Bare /${AGENT_SEGMENT} would 404: the location below only matches the trailing slash.
+location = /${AGENT_SEGMENT} { return 301 /${AGENT_SEGMENT}/; }
 
-location /${seg}/ {
-    # Trailing slash strips the /${seg} prefix. The agent binds at root and
+location /${AGENT_SEGMENT}/ {
+    # Trailing slash strips the /${AGENT_SEGMENT} prefix. The agent binds at root and
     # serves /.well-known/agent-card.json and /invoke there; it only knows
-    # about /${seg} as the public_url it advertises inside the card.
-    proxy_pass http://127.0.0.1:${port}/;
+    # about /${AGENT_SEGMENT} as the public_url it advertises inside the card.
+    proxy_pass http://127.0.0.1:${AGENT_PORT}/;
 
     proxy_set_header Host              \$host;
     proxy_set_header X-Real-IP         \$remote_addr;
@@ -626,22 +603,22 @@ EOF
 # ---- mode: print-config ---------------------------------------------------
 
 if [[ "$mode" == "print-config" ]]; then
-  # Preview one agent's config (default svpchain-evm-agent; --print-agent
-  # <name> for another), with that agent's port and — when --key-dir supplies
-  # it a key — its [operator] block.
-  resolve_operator_keys
-  render_agent_toml "$print_agent"
+  # Preview the agent.toml this deploy would ship, [operator] block included
+  # when --operator-key-file supplies a key.
+  resolve_operator_key
+  render_agent_toml
   exit 0
 fi
 
 # ---- mode: print-compose --------------------------------------------------
 
 if [[ "$mode" == "print-compose" ]]; then
-  # Preview the one docker-compose.yml that runs every agent. Uses a
-  # placeholder install_dir/image when not resolved, and reflects --key-dir so
-  # keyed agents show their operator.key mount.
-  resolve_operator_keys
-  image_ref="ghcr.io/svpchain/svpchain-evm-agent:${image_tag:-<tag>}"
+  # Preview the docker-compose.yml. Uses a placeholder install_dir/image when
+  # not resolved, and reflects --operator-key-file so a keyed deploy shows its
+  # operator.key mount.
+  resolve_operator_key
+  resolve_bridge_routes
+  image_ref="${IMAGE_REPO}:${image_tag:-<tag>}"
   render_compose_yaml
   exit 0
 fi
@@ -656,7 +633,7 @@ fi
 # ---- mode: print-nginx ----------------------------------------------------
 
 if [[ "$mode" == "print-nginx" ]]; then
-  render_nginx_conf "${AGENTS[0]}"
+  render_nginx_conf
   exit 0
 fi
 
@@ -666,15 +643,11 @@ if [[ "$mode" == "uninstall" ]]; then
   [[ -n "$host" ]] || fail "--host is required (or set SVPCHAIN_DEPLOY_HOST)"
   step "svpchain agents uninstall on $host"
   resolve_remote_install_dir
-  # compose down brings every agent service down together.
   remote_exec "docker compose -f $install_dir/docker-compose.yml down 2>/dev/null || true"
-  # Belt-and-braces: remove each agent container by name in case the compose
-  # file is gone, then the shared image, then the install dir. Iterates the
-  # known set, not the deployed one, so a retired agent's container goes too.
-  for name in "${KNOWN_AGENTS[@]}"; do
-    remote_exec "docker rm -f $name 2>/dev/null || true"
-  done
-  remote_exec "sh -c 'docker images --format \"{{.Repository}}:{{.Tag}}\" svpchain-remote-agents 2>/dev/null | xargs -r docker rmi 2>/dev/null || true'"
+  # Belt-and-braces: remove the container by name in case the compose file is
+  # gone, then the image, then the install dir.
+  remote_exec "docker rm -f $AGENT_NAME 2>/dev/null || true"
+  remote_exec "sh -c 'docker images --format \"{{.Repository}}:{{.Tag}}\" $IMAGE_REPO 2>/dev/null | xargs -r docker rmi 2>/dev/null || true'"
   remote_exec "rm -rf $install_dir"
   step "Done"
   exit 0
@@ -688,31 +661,13 @@ require_cmd rsync
 require_cmd ssh
 require_cmd go
 
-# Per-agent operator keys: resolve local paths (against the operator's CWD,
-# before any cd), validate them, and enforce the distinct-key rule. An agent
-# with no key runs keyless.
-resolve_operator_keys
-
-# Bridge route shipping — same rules as the MCP deploy: with a RELATIVE routes
-# path the registry is generated (or overridden via --evm-bridge-routes-src)
-# and mounted next to agent.toml; an ABSOLUTE path is operator-managed.
-if [[ -n "$evm_bridge_addr" && -n "$evm_bridge_routes" && -n "$evm_bridge_source_chain_id" ]]; then
-  case "$evm_bridge_routes" in
-    /*)
-      info "bridge: evm_bridge_routes is absolute ($evm_bridge_routes) — not auto-shipping; ensure that path exists on $host."
-      ;;
-    *)
-      bridge_routes_basename="$(basename "$evm_bridge_routes")"
-      if [[ -n "$evm_bridge_routes_src" ]]; then
-        if [[ "$evm_bridge_routes_src" = /* ]]; then
-          bridge_routes_src_abs="$evm_bridge_routes_src"
-        else
-          bridge_routes_src_abs="$(pwd)/$evm_bridge_routes_src"
-        fi
-        [[ -f "$bridge_routes_src_abs" ]] || fail "--evm-bridge-routes-src '$bridge_routes_src_abs' was not found"
-      fi
-      ;;
-  esac
+# Resolve the operator key path and any --evm-bridge-routes-src (both against
+# the operator's CWD, before any cd) and validate them. With no key the agent
+# runs keyless.
+resolve_operator_key
+resolve_bridge_routes
+if [[ -n "$evm_bridge_addr" && -z "$bridge_routes_basename" ]]; then
+  info "bridge: evm_bridge_routes is absolute ($evm_bridge_routes) — not auto-shipping; ensure that path exists on $host."
 fi
 
 REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -722,25 +677,18 @@ if [[ -z "$image_tag" ]]; then
   if image_tag="$(git rev-parse --short HEAD 2>/dev/null)"; then :
   else image_tag="dev"; fi
 fi
-image_ref="ghcr.io/svpchain/svpchain-evm-agent:${image_tag}"
-image_tar="${REPO_DIR}/build/svpchain-evm-agent.image.tar"
+image_ref="${IMAGE_REPO}:${image_tag}"
+image_tar="${REPO_DIR}/build/${AGENT_NAME}.image.tar"
 mkdir -p "${REPO_DIR}/build"
 
 step "Preflight (operator + remote)"
 info "host=$host image=$image_ref platform=$platform"
-info "install_dir=$install_dir public_url_base=$public_url"
-for name in "${AGENTS[@]}"; do
-  if ! agent_active "$name"; then
-    info "  ${name} — skipped (needs an operator key; add research.key to --key-dir to deploy it)"
-    continue
-  fi
-  keysrc="$(agent_key_src "$name")"
-  if [[ -n "$keysrc" ]]; then
-    info "  ${name} :$(agent_port "$name") — key ${keysrc} (execution ON)"
-  else
-    info "  ${name} :$(agent_port "$name") — keyless (execution refuses with a reason)"
-  fi
-done
+info "install_dir=$install_dir public_url=$agent_public_url"
+if [[ -n "$operator_key" ]]; then
+  info "  ${AGENT_NAME} :${AGENT_PORT} — key ${operator_key} (execution ON)"
+else
+  info "  ${AGENT_NAME} :${AGENT_PORT} — keyless (execution refuses with a reason)"
+fi
 if [[ "$dry_run" != "1" ]]; then
   ssh -o BatchMode=yes "$host" "docker version --format '{{.Server.Version}}'" \
     >/dev/null 2>&1 \
@@ -761,16 +709,16 @@ if [[ "$skip_build" == "1" ]]; then
   info "--skip-build: reusing existing local image $image_ref"
   [[ -n "$(local_image_id "$image_ref")" ]] || fail "image $image_ref not found locally; drop --skip-build"
 else
-  # Vendored build (see Dockerfile.agents): the go.mod replace to
-  # ../svpagent/protocol resolves on the operator, and the vendored tree makes
-  # the Docker context self-contained. One image carries every agent binary.
+  # Vendored build (see cmd/svpchain-evm-agent/Dockerfile): the go.mod
+  # replace to ../svpagent/protocol resolves on the operator, and the vendored
+  # tree makes the Docker context self-contained.
   run_or_print "go mod vendor"
   build_cmd="docker build --platform $platform"
   build_cmd+=" --build-arg VERSION=$image_tag"
   build_cmd+=" --build-arg COMMIT=$(git rev-parse HEAD 2>/dev/null || echo unknown)"
   build_cmd+=" -t $image_ref"
-  build_cmd+=" -t ghcr.io/svpchain/svpchain-evm-agent:latest"
-  build_cmd+=" -f cmd/svpchain-evm-agent/Dockerfile ."
+  build_cmd+=" -t ${IMAGE_REPO}:latest"
+  build_cmd+=" -f cmd/${AGENT_NAME}/Dockerfile ."
   run_or_print "$build_cmd"
 fi
 
@@ -779,113 +727,95 @@ step "On operator: docker save (cached by image id)"
 save_if_changed "$image_ref" "$image_tar"
 expected_id="$(cat "${image_tar}.id" 2>/dev/null || echo "")"
 
-# Phase 3: ship per-agent config + one compose + one image tar (operator → remote)
+# Phase 3: ship config + compose + the image tar (operator → remote)
 step "On operator → remote: rsync configs + image tar to $install_dir"
-compose_tmp="$(mktemp -t svpchain-evm-agent.compose.XXXXXX)"
-routes_tmp=""
-declare -a AGENT_TMP=() KEY_TMP=()
-trap 'rm -f "$compose_tmp" "$routes_tmp" ${AGENT_TMP[@]+"${AGENT_TMP[@]}"} ${KEY_TMP[@]+"${KEY_TMP[@]}"}' EXIT
 
-render_compose_yaml > "$compose_tmp"
+# One staging directory, one rsync: everything the remote needs beside the
+# image is rendered here first, so the transfer is a single round trip.
+#
+# The modes are deliberate. The operator key is a secret and must land 0600,
+# and rsync -a carrying the staged mode is the only portable way to get it
+# there — macOS's openrsync rejects --chmod=F600. The other two files shipped
+# from mktemp (0600) before this, so pin the whole directory to match rather
+# than let the umask quietly relax them to 0644 on every deployed host. 0755
+# on the directory itself keeps $install_dir at the mode `mkdir -p` gave it:
+# with a trailing slash on the source, rsync applies the source root's
+# attributes to the destination root.
+stage_dir="$(mktemp -d -t "${AGENT_NAME}.stage.XXXXXX")"
+trap 'rm -rf "$stage_dir"' EXIT
 
-# The bridge route registry is shipped once per agent that serves the bridge.
-bridge_routes_ship=""
+render_agent_toml   > "$stage_dir/agent.toml"
+render_compose_yaml > "$stage_dir/docker-compose.yml"
+if [[ -n "$operator_key" ]]; then
+  cp "$operator_key" "$stage_dir/operator.key"
+fi
+# The route registry: --evm-bridge-routes-src when given, otherwise the
+# built-in whitelist. Core reads it at boot, so it must land with the config.
 if [[ -n "$bridge_routes_basename" ]]; then
   if [[ -n "$bridge_routes_src_abs" ]]; then
-    bridge_routes_ship="$bridge_routes_src_abs"
+    cp "$bridge_routes_src_abs" "$stage_dir/$bridge_routes_basename"
   else
-    routes_tmp="$(mktemp -t svpchain-evm-agent.routes.XXXXXX)"
-    render_routes_json > "$routes_tmp"
-    bridge_routes_ship="$routes_tmp"
+    render_routes_json > "$stage_dir/$bridge_routes_basename"
   fi
 fi
+chmod 600 "$stage_dir"/*
+chmod 755 "$stage_dir"
 
-remote_exec "mkdir -p $install_dir"
-for name in "${AGENTS[@]}"; do
-  agent_active "$name" || continue
-  port="$(agent_port "$name")"
-  keysrc="$(agent_key_src "$name")"
-
-  toml_tmp="$(mktemp -t "${name}.toml.XXXXXX")"
-  AGENT_TMP+=("$toml_tmp")
-  # 4 args pin the per-agent key (empty → keyless), overriding the fallback.
-  render_agent_toml "$name" "$port" "${public_url}/$(agent_keyname "$name")" "$keysrc" > "$toml_tmp"
-
-  remote_exec "mkdir -p $install_dir $install_dir/data"
-  run_or_print "rsync -avz '$toml_tmp' '$host:$install_dir/agent.toml'"
-
-  # The operator key is a secret: ship a 0600 temp copy — rsync -a preserves
-  # permissions where --chmod=F600 is not portable (macOS's openrsync rejects
-  # the octal form) — and pin it remotely too.
-  if [[ -n "$keysrc" ]]; then
-    key_tmp="$(mktemp -t "${name}.key.XXXXXX")"
-    KEY_TMP+=("$key_tmp")
-    run_or_print "cp '$keysrc' '$key_tmp' && chmod 600 '$key_tmp'"
-    run_or_print "rsync -avz '$key_tmp' '$host:$install_dir/operator.key'"
-    remote_exec "chmod 600 $install_dir/operator.key"
-  fi
-
-  # Bridge routes ride only with the agents whose compose service mounts them.
-  if [[ -n "$bridge_routes_ship" && "$name" == "svpchain-evm-agent" ]]; then
-    run_or_print "rsync -avz '$bridge_routes_ship' '$host:$install_dir/$bridge_routes_basename'"
-  fi
-done
-
-run_or_print "rsync -avz '$compose_tmp' '$host:$install_dir/docker-compose.yml'"
-run_or_print "rsync -avz '$image_tar' '$host:$install_dir/svpchain-evm-agent.image.tar'"
+remote_exec "mkdir -p $install_dir $install_dir/data"
+# The trailing slash on the source is load-bearing: without it rsync creates
+# $install_dir/<staging-dir-name>/ and the agent keeps running against its old
+# agent.toml, with nothing anywhere reporting an error.
+run_or_print "rsync -avz '$stage_dir/' '$host:$install_dir/'"
+# The image tar ships separately: save_if_changed keys its skip on the
+# ${image_tar}.id sidecar in build/, so folding a multi-hundred-MB file into
+# the staging dir would mean copying it on every run.
+run_or_print "rsync -avz '$image_tar' '$host:$install_dir/${AGENT_NAME}.image.tar'"
 
 # Phase 4: load (On remote)
 step "On remote: docker load (skipped if image already loaded)"
-load_if_missing "$image_ref" "$install_dir/svpchain-evm-agent.image.tar" "$expected_id"
-remote_exec "docker tag $image_ref ghcr.io/svpchain/svpchain-evm-agent:latest"
+load_if_missing "$image_ref" "$install_dir/${AGENT_NAME}.image.tar" "$expected_id"
+remote_exec "docker tag $image_ref ${IMAGE_REPO}:latest"
 
-# Phase 5: run (On remote) — one compose up brings every agent service up.
+# Phase 5: run (On remote)
 step "On remote: docker compose up -d"
-# The known set, not just the deployed one: an agent retired since the last
-# deploy still has a container here, and compose will not remove a service it
-# no longer defines — it would sit there running a stale image.
-for name in "${KNOWN_AGENTS[@]}"; do
-  remote_exec "docker rm -f $name 2>/dev/null || true"
-done
+# The explicit rm first: compose will not recreate a container it considers
+# up-to-date, so a config-only change to a mounted file would otherwise leave
+# the old process running.
+remote_exec "docker rm -f $AGENT_NAME 2>/dev/null || true"
 remote_exec "docker compose -f $install_dir/docker-compose.yml up -d"
 
-# Phase 6: verify (On operator) — smoke-test every agent on its own port.
+# Phase 6: verify (On operator) — smoke-test over loopback on the remote.
 step "On remote: smoke test (healthz + agent card over loopback via ssh)"
-for name in "${AGENTS[@]}"; do
-  agent_active "$name" || continue
-  port="$(agent_port "$name")"
-  if [[ "$dry_run" == "1" ]]; then
-    info "[dry-run] would ssh $host curl -> http://127.0.0.1:$port/healthz + agent card ($name)"
-    continue
-  fi
-  # Each agent dials the chain gRPC and (for the perp-pricing profiles)
-  # finishes an initial markets-cache refresh before serving; give it a few
-  # seconds to come up.
+if [[ "$dry_run" == "1" ]]; then
+  info "[dry-run] would ssh $host curl -> http://127.0.0.1:${AGENT_PORT}/healthz + agent card"
+else
+  # The agent dials the chain gRPC and finishes an initial markets-cache
+  # refresh before serving; give it a few seconds to come up.
   healthy=""
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     code=$(ssh -o BatchMode=yes "$host" \
-      "curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:${port}/healthz" \
+      "curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:${AGENT_PORT}/healthz" \
       2>/dev/null || echo 000)
     if [[ "$code" == "200" ]]; then healthy="1"; break; fi
     sleep 2
   done
   if [[ -z "$healthy" ]]; then
-    info "$name: healthz on :$port did not answer 200. Check logs with:"
-    info "  ssh $host 'docker logs $name --tail=80'"
-    info "Common causes: gRPC/RPC endpoints in agent.toml not reachable from"
-    info "the container; the evm/lending agents also need evm_rpc + comptroller."
-    fail "smoke test failed for $name"
+    info "healthz on :${AGENT_PORT} did not answer 200. Check logs with:"
+    info "  ssh $host 'docker logs $AGENT_NAME --tail=80'"
+    info "Common cause: the gRPC/RPC endpoints in agent.toml are not reachable"
+    info "from inside the container."
+    fail "smoke test failed for $AGENT_NAME"
   fi
   skills=$(ssh -o BatchMode=yes "$host" \
-    "curl -sS --max-time 5 http://127.0.0.1:${port}/.well-known/agent-card.json" \
+    "curl -sS --max-time 5 http://127.0.0.1:${AGENT_PORT}/.well-known/agent-card.json" \
     2>/dev/null | { command -v jq >/dev/null 2>&1 && jq -r '.skills | length' || cat; } || echo "")
   if [[ "$skills" =~ ^[0-9]+$ ]]; then
-    pass "$name :$port — /healthz 200, card served ($skills skills)"
+    pass "$AGENT_NAME :${AGENT_PORT} — /healthz 200, card served ($skills skills)"
   else
     # jq may be missing on the operator — the card body already proves the
     # endpoint answers; don't fail the deploy over the count.
-    pass "$name :$port — /healthz 200, card fetched (skill count unverified)"
+    pass "$AGENT_NAME :${AGENT_PORT} — /healthz 200, card fetched (skill count unverified)"
   fi
-done
+fi
 
-step "Done — svpchain agents $image_tag running on $host (research :8081, perps :8082, evm :8083, lending :8084)"
+step "Done — $AGENT_NAME $image_tag running on $host (:${AGENT_PORT}, advertised at $agent_public_url)"

@@ -40,12 +40,27 @@ func TestDeployScriptConfigParses(t *testing.T) {
 			"--operator-key-file", keyFile,
 			"--public-url", "https://agents.example.com",
 		},
-		"families-off": {
+		// The minimum bootable EVM agent: every optional family off, but the
+		// EVM RPC kept, because main.go calls cfg.RequireEVM and this binary
+		// exists to serve that surface. The swap, oracle and bridge tools then
+		// refuse at call time with a reason.
+		"optional-families-off": {
 			"--print-config", "--host", "www@agent.example.com",
-			"--evm-rpc", "", "--faucet-url", "",
 			"--evm-uniswap-router", "", "--evm-wsvp", "", "--evm-oracle", "",
-			"--evm-lendora-comptroller", "", "--evm-bridge-routes", "",
-			"--evm-foreign-chains", "",
+			"--evm-bridge-addr", "", "--evm-bridge-routes", "",
+			"--evm-foreign-chains", "", "--faucet-url", "",
+		},
+		// The other direction: every optional block the script can render, on
+		// at once, so a typo in one of those heredocs fails here rather than
+		// on a remote host. [agent_chain] is both-or-neither in core, which
+		// this also pins.
+		"all-optionals": {
+			"--print-config", "--host", "www@agent.example.com",
+			"--agent-chain-id", "svp-agent-1",
+			"--agent-chain-rest", "http://127.0.0.1:1317",
+			"--deposit-max-usdc", "1000", "--withdraw-max-usdc", "500",
+			"--transfer-max-usdc", "250", "--daily-withdraw-cap-usdc", "2000",
+			"--markets-refresh", "60s",
 		},
 	}
 
@@ -69,8 +84,56 @@ func TestDeployScriptConfigParses(t *testing.T) {
 			if name == "keyed" && cfg.Operator.KeyFile == "" {
 				t.Error("keyed variant must set key_file")
 			}
+			// Every variant must clear the guard the binary applies at boot:
+			// the deploy script has no business rendering a config this
+			// agent's own main.go would reject.
+			if err := cfg.RequireEVM(); err != nil {
+				t.Errorf("rendered config would not boot: %v\n%s", err, out)
+			}
+			// The default deploy configures the bridge, and core loads the
+			// route registry at startup — a configured bridge whose
+			// routes_path the script does not ship is a boot failure, not a
+			// call-time refusal. The script only ships the registry when the
+			// path is relative, so an absolute default would silently break
+			// every deploy.
+			if name == "keyless" {
+				if cfg.EVM.Bridge.Addr == "" {
+					t.Error("default config must configure the bridge; this agent serves it")
+				}
+				// Read the rendered text, not cfg: config.Load resolves a
+				// relative routes_path against the config directory, so the
+				// loaded value is absolute either way.
+				rendered, ok := tomlValue(string(out), "routes_path")
+				if !ok {
+					t.Error("a configured bridge must set routes_path")
+				} else if strings.HasPrefix(rendered, "/") {
+					t.Errorf("routes_path %q is absolute, so deploy.sh will not ship it", rendered)
+				}
+			}
+			if name == "all-optionals" {
+				if cfg.AgentChain.RestURL == "" {
+					t.Error("all-optionals must render [agent_chain]")
+				}
+				if cfg.Limits.DepositMaxUSDC != 1000 {
+					t.Errorf("deposit_max_usdc = %d, want 1000", cfg.Limits.DepositMaxUSDC)
+				}
+			}
 		})
 	}
+}
+
+// tomlValue returns the quoted value of the first `key = "…"` line in a
+// rendered config. Deliberately naive: it reads what the script printed,
+// before config.Load rewrites relative paths.
+func tomlValue(rendered, key string) (string, bool) {
+	for _, line := range strings.Split(rendered, "\n") {
+		k, v, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(k) != key {
+			continue
+		}
+		return strings.Trim(strings.TrimSpace(v), `"`), true
+	}
+	return "", false
 }
 
 // The route and the card must agree. An agent advertises public_url inside its
@@ -79,8 +142,9 @@ func TestDeployScriptConfigParses(t *testing.T) {
 // disagree on the path segment, the agent advertises a URL that 404s and reads
 // as unverified — with every process healthy and nothing in the logs.
 //
-// Both come from the same two shell functions, so this asserts they stay wired
-// to them rather than to two hand-maintained copies of the same fact.
+// Both come from the same two constants, AGENT_PORT and AGENT_SEGMENT, so this
+// asserts they stay wired to them rather than to two hand-maintained copies of
+// the same fact.
 func TestDeployScriptNginxRouteMatchesConfig(t *testing.T) {
 	script, err := filepath.Abs(filepath.Join("scripts", "deploy.sh"))
 	if err != nil {
