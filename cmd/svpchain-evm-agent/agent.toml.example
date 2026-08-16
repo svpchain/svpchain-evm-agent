@@ -36,7 +36,7 @@ evm_rpc_url      = "http://127.0.0.1:8545"
 # Operator key for on-chain self-registration and SVP-DT settlement
 # (delegated EVM writes are future work). Optional: without it the
 # svpchain-execution skill refuses with a reason.
-# The SVPCHAIN_AGENT_OPERATOR_KEY env var takes precedence over key_file.
+# The SVPCHAIN_EVM_AGENT_OPERATOR_KEY env var takes precedence over key_file.
 #[operator]
 #key_file     = "operator.key"
 #capabilities = ["evm.swap", "evm.bridge", "evm.tokens"]

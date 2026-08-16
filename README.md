@@ -33,7 +33,6 @@ go run ./cmd/svpchain-evm-agent -config cmd/svpchain-evm-agent/agent.toml
 
 ```sh
 ./scripts/deploy.sh --host www@host.example.com \
-  --operator-key-file ./evm.key \
   --public-url https://agents.svpchain.org
 ```
 
@@ -101,7 +100,7 @@ with a reason. With one, `agent_self_register` puts this agent on chain and it
 can execute delegated orders and be paid through the settlement escrow.
 
 It is a 32-byte hex eth_secp256k1 key, read from `[operator] key_file` or from
-`SVPCHAIN_AGENT_OPERATOR_KEY` (which takes precedence), and shipped at mode 600.
+`SVPCHAIN_EVM_AGENT_OPERATOR_KEY` (which takes precedence), and shipped at mode 600.
 
 **It must be distinct from every other agent's key.** An agent's on-chain id
 derives from its key and `agent_self_register` publishes a hash of *this*

@@ -126,7 +126,7 @@ type BridgeConfig struct {
 // unconfigured families.
 type Operator struct {
 	// KeyFile is a file holding the operator private key as hex. The
-	// SVPCHAIN_AGENT_OPERATOR_KEY env var takes precedence when set, so
+	// SVPCHAIN_EVM_AGENT_OPERATOR_KEY env var takes precedence when set, so
 	// deployments can inject the key without touching disk.
 	KeyFile string `toml:"key_file"`
 
