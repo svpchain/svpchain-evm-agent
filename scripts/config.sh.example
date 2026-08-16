@@ -1,0 +1,89 @@
+# scripts/deploy.sh settings, so a routine install is `./scripts/deploy.sh`
+# with no flags.
+#
+# This file is SOURCED, not parsed — it can compute its values, and it runs as
+# you. deploy.sh refuses to read it if it is group- or world-writable.
+#
+#   ./scripts/deploy.sh --init-config    # writes this file at 0600 and names it
+#
+# The directory is named after this agent rather than after the project, so
+# every agent in the fleet carries its own. That is what keeps their operator
+# keys apart: an agent's on-chain id derives from its key, so two agents
+# sharing one would be a single id claiming two cards.
+#
+# Precedence: flag > environment > config file > default. So
+# `./scripts/deploy.sh --public-url https://staging.example.org` still works,
+# and so does a one-off `SVPCHAIN_DEPLOY_HOST=other ./scripts/deploy.sh`.
+
+# ---- the host and the chain ------------------------------------------------
+
+# SSH target. Needs docker and compose v2 usable without sudo.
+SVPCHAIN_DEPLOY_HOST="www@svpdev1.example.com"
+
+# The DEX chain, as reached from the deploy host itself — the container runs
+# with network_mode: host, so 127.0.0.1 here means the host's own loopback.
+SVPCHAIN_CHAIN_ID="svp-2517-1"
+SVPCHAIN_GRPC_ADDR="127.0.0.1:9090"
+SVPCHAIN_COMET_RPC="http://127.0.0.1:26657"
+SVPCHAIN_INDEXER="http://127.0.0.1:3002"
+
+# Optional separate chain carrying x/agent + x/agentwallet, over its Cosmos
+# REST API. Both or neither.
+#SVPCHAIN_AGENT_CHAIN_ID="svpagent-testnet-1"
+#SVPCHAIN_AGENT_CHAIN_REST="http://127.0.0.1:1317"
+
+# The base URL callers reach the agents at. Each agent appends its own segment;
+# this one advertises <base>/evm.
+SVPCHAIN_AGENT_PUBLIC_URL="https://agents.svpchain.org"
+
+# ---- this agent's identity -------------------------------------------------
+
+# Optional. Unset, the agent runs keyless: it still advertises the execution
+# skills but refuses them at call time with a reason. Set, it signs delegated
+# executions and its own registration.
+#
+# Must be distinct from every other agent's — see above.
+#SVPCHAIN_AGENT_OPERATOR_KEY_FILE="$HOME/.config/svpchain-evm-agent/operator.key"
+
+SVPCHAIN_OPERATOR_CAPABILITIES="evm.swap,evm.bridge,evm.tokens"
+SVPCHAIN_OPERATOR_METADATA="svpchain evm agent"
+
+# ---- optional families and tuning ------------------------------------------
+
+# ---- the EVM surface (this agent's whole point) -----------------------------
+
+# The chain's EVM JSON-RPC. Required to boot.
+SVPCHAIN_EVM_RPC="http://127.0.0.1:8545"
+
+# The swap rail: router plus wrapped SVP, its base asset.
+SVPCHAIN_EVM_UNISWAP_ROUTER="0xFe7bf2DFd5CB268C6779f1F614638a436Cb701e4"
+SVPCHAIN_EVM_WSVP="0x771a0a63D8198b7dbea4a16910ff68AB38006531"
+
+# Price feed behind get_oracle_price.
+SVPCHAIN_EVM_ORACLE="0xAE351F2dF66DF1A7d2eB0D7574BcDb909E680B56"
+
+# SVPBridge on this chain, plus the routes registry it reads. A RELATIVE routes
+# path is generated and shipped beside agent.toml; an ABSOLUTE one is
+# operator-managed and not shipped.
+SVPCHAIN_EVM_BRIDGE="0x78Aca10afd5b28E838ECf0De20c5621CE39D9F4a"
+#SVPCHAIN_EVM_BRIDGE_ROUTES="routes.json"
+#SVPCHAIN_EVM_BRIDGE_ROUTES_SRC="$HOME/.config/svpchain-evm-agent/routes.json"
+SVPCHAIN_EVM_BRIDGE_SOURCE_CHAIN_ID="2517"
+
+# ";"-separated chainId,rpcUrl,bridgeAddr triples for the far side of a bridge.
+#SVPCHAIN_EVM_FOREIGN_CHAINS="421614,https://sepolia-rollup.arbitrum.io/rpc,0xB6c74A758E3fA7bf57c22037821f7cA974d0CdfD"
+
+# Empty makes the faucet skills refuse with a reason.
+SVPCHAIN_FAUCET_URL="https://pre-faucet.svpchain.org"
+
+# How often the markets cache refreshes.
+#SVPCHAIN_MARKETS_REFRESH="30s"
+
+# Caps on funds movements, in human USDC. Unset means no cap.
+#SVPCHAIN_DEPOSIT_MAX_USDC="10000"
+#SVPCHAIN_WITHDRAW_MAX_USDC="10000"
+#SVPCHAIN_TRANSFER_MAX_USDC="10000"
+#SVPCHAIN_DAILY_WITHDRAW_CAP_USDC="50000"
+
+# Where the agent is installed on the remote host.
+#SVPCHAIN_INSTALL_DIR="~/svpchain-evm-agent"

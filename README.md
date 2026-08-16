@@ -37,6 +37,35 @@ go run ./cmd/svpchain-evm-agent -config cmd/svpchain-evm-agent/agent.toml
   --public-url https://agents.svpchain.org
 ```
 
+### Settings in a file instead of flags
+
+This agent has the largest flag surface of the four — the whole EVM section is
+addresses. Rather than retyping them, put them in a sourced shell file:
+
+```sh
+mkdir -p ~/.config/svpchain-evm-agent
+cp scripts/config.sh.example ~/.config/svpchain-evm-agent/config.sh
+chmod 600 ~/.config/svpchain-evm-agent/config.sh   # sourced, so it is code
+```
+
+Then a routine install is just `./scripts/deploy.sh`.
+
+The directory is named after **this agent**, not after the project, so every
+agent in the fleet carries its own. That is not filing tidiness: an agent's
+on-chain id derives from its operator key, so two agents sharing one key would
+be a single id claiming two cards. A directory per agent makes that hard to do
+by accident, where one shared file would invite it.
+
+Precedence is flag > environment > config file > default, so
+`./scripts/deploy.sh --public-url https://staging.example.org` still overrides,
+and `--no-config` ignores the file. `--config-dir` (or `SVPCHAIN_CONFIG_DIR`)
+points elsewhere. Because the file is sourced rather than parsed it can compute
+values — and by the same token it is code, so the script refuses one that is
+group- or world-writable.
+
+The caps and `--markets-refresh` had no environment variable before this file
+existed; they are settable now as `SVPCHAIN_DEPOSIT_MAX_USDC` and friends.
+
 Inspect without touching anything: `--print-config`, `--print-compose`,
 `--print-nginx`, `--print-routes`, `--dry-run`. Tear down with `--uninstall`.
 
