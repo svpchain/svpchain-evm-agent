@@ -17,7 +17,7 @@ import (
 	agenttypes "github.com/dydxprotocol/v4-chain/protocol/x/agent/types"
 	wallettypes "github.com/dydxprotocol/v4-chain/protocol/x/agentwallet/types"
 
-	"github.com/svpchain/svpchain-mcp/lib/mcp/mcpcodec"
+	"github.com/svpchain/svpchain-evm-agent/internal/mcp/mcpcodec"
 )
 
 // newTestClient serves handler and returns a Client pointed at it.

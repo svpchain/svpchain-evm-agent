@@ -10,7 +10,7 @@ import (
 	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
 	"github.com/cosmos/gogoproto/proto"
 
-	"github.com/svpchain/svpchain-mcp/lib/mcp/payload"
+	"github.com/svpchain/svpchain-evm-agent/internal/mcp/payload"
 )
 
 // BroadcastInput carries a caller-signed registry/delegation tx destined for

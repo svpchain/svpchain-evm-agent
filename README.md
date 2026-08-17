@@ -14,6 +14,13 @@ Everything above is implemented under `internal/`, which was the shared
 `cmd/svpchain-evm-agent` composes it — `wire.EVMProfile` selects the operation
 families, and `card.go` declares this agent's public identity.
 
+`internal/mcp` is a second such absorption: `svpchain-mcp`'s `lib/mcp` at tag
+`v0.1.0`, the MCP tool handlers the A2A bridge dispatches into, plus the chain
+clients, tx builders and EVM contract bindings under them. Unlike agent-core
+that repo is still live — the lending and research agents keep importing it —
+so this copy is a fork, kept diffable against the tag. `internal/mcp/doc.go`
+has the details and the re-sync recipe.
+
 | | |
 |---|---|
 | Port | 8082 |
@@ -136,8 +143,14 @@ every one of protocol's verbatim; `deps_test.go` diffs the two on every
 `go test ./...`, so drift fails loudly instead of resolving upstream cosmos and
 erroring somewhere unrelated.
 
-`internal/` is the former `svpchain-agent-core`, vendored in when that repo was
-retired and pruned to this binary's surface. The Lendora surface went with it; the perps
-families remain in `internal/toolbridge` but are deliberately unregistered,
-because the shared dispatch and delegated-read tests exercise the credential
-machinery through them and the delegated read layer covers only account tools.
+`internal/` is the former `svpchain-agent-core` and `internal/mcp` the former
+`svpchain-mcp/lib/mcp`, both folded in and pruned to this binary's surface. The
+Lendora surface went with them; the perps families remain in
+`internal/toolbridge` and `internal/mcp/tools` but are deliberately
+unregistered, because the shared dispatch and delegated-read tests exercise the
+credential machinery through them and the delegated read layer covers only
+account tools.
+
+The lending and research agents still import `svpchain-mcp`, and that repo is
+not going away — it still ships `cmd/mcp-server`. Fixes landing there do not
+reach `internal/mcp` on their own.

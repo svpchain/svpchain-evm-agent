@@ -27,13 +27,13 @@ import (
 	"github.com/svpchain/svpdt"
 
 	"github.com/svpchain/svpchain-evm-agent/internal/agentchain"
+	"github.com/svpchain/svpchain-evm-agent/internal/mcp/chain"
+	"github.com/svpchain/svpchain-evm-agent/internal/mcp/markets"
+	"github.com/svpchain/svpchain-evm-agent/internal/mcp/payload"
+	"github.com/svpchain/svpchain-evm-agent/internal/mcp/policy"
+	"github.com/svpchain/svpchain-evm-agent/internal/mcp/signer"
+	"github.com/svpchain/svpchain-evm-agent/internal/mcp/tools"
 	"github.com/svpchain/svpchain-evm-agent/internal/operator"
-	"github.com/svpchain/svpchain-mcp/lib/mcp/chain"
-	"github.com/svpchain/svpchain-mcp/lib/mcp/markets"
-	"github.com/svpchain/svpchain-mcp/lib/mcp/payload"
-	"github.com/svpchain/svpchain-mcp/lib/mcp/policy"
-	"github.com/svpchain/svpchain-mcp/lib/mcp/signer"
-	"github.com/svpchain/svpchain-mcp/lib/mcp/tools"
 )
 
 const (

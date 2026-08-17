@@ -14,11 +14,11 @@ import (
 	"github.com/cosmos/evm/crypto/ethsecp256k1"
 
 	"github.com/svpchain/svpchain-evm-agent/internal/marketdata"
+	"github.com/svpchain/svpchain-evm-agent/internal/mcp/auth"
+	"github.com/svpchain/svpchain-evm-agent/internal/mcp/policy"
+	"github.com/svpchain/svpchain-evm-agent/internal/mcp/signer"
+	"github.com/svpchain/svpchain-evm-agent/internal/mcp/tools"
 	"github.com/svpchain/svpchain-evm-agent/internal/toolbridge"
-	"github.com/svpchain/svpchain-mcp/lib/mcp/auth"
-	"github.com/svpchain/svpchain-mcp/lib/mcp/policy"
-	"github.com/svpchain/svpchain-mcp/lib/mcp/signer"
-	"github.com/svpchain/svpchain-mcp/lib/mcp/tools"
 )
 
 // tenantAdapter mirrors the wire-level adapter: auto-issued tenants resolve

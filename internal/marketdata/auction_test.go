@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/svpchain/svpchain-evm-agent/internal/marketdata"
-	"github.com/svpchain/svpchain-mcp/lib/mcp/indexer"
+	"github.com/svpchain/svpchain-evm-agent/internal/mcp/indexer"
 )
 
 func book(bids, asks [][2]string) *indexer.Orderbook {

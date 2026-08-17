@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/svpchain/svpchain-evm-agent/internal/agentchain"
-	"github.com/svpchain/svpchain-mcp/lib/mcp/tools"
+	"github.com/svpchain/svpchain-evm-agent/internal/mcp/tools"
 )
 
 // expectedOps pins the full skill → tool table. A tool added to (or removed

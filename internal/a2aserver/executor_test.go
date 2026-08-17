@@ -9,9 +9,9 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
 	"github.com/svpchain/svpchain-evm-agent/internal/marketdata"
+	"github.com/svpchain/svpchain-evm-agent/internal/mcp/indexer"
+	"github.com/svpchain/svpchain-evm-agent/internal/mcp/tools"
 	"github.com/svpchain/svpchain-evm-agent/internal/toolbridge"
-	"github.com/svpchain/svpchain-mcp/lib/mcp/indexer"
-	"github.com/svpchain/svpchain-mcp/lib/mcp/tools"
 )
 
 // execCtxFor wraps a raw request string in the ExecutorContext shape handle
