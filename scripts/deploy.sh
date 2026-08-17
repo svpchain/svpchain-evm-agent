@@ -4,7 +4,8 @@
 # as a docker container.
 #
 # This agent serves the EVM DeFi slice of the SVP-Chain A2A surface on
-# :8083, advertised at <public-url>/evm. It is deployed independently: its
+# :8083, advertised at the public URL you give it verbatim — no path segment is
+# appended, so that URL must reach this agent. It is deployed independently: its
 # sibling agents (the other three) each own their own repo and script,
 # so nothing here knows or cares about them.
 #
@@ -57,8 +58,8 @@
 #                                  the DEX chain connection.
 #
 # Identity and execution:
-#   --public-url <url>             Base URL; this agent advertises <base>/evm.
-#                                  SVPCHAIN_AGENT_PUBLIC_URL
+#   --public-url <url>             The URL this agent advertises, used verbatim.
+#                                  SVPCHAIN_EVM_AGENT_PUBLIC_URL
 #
 #   SVPCHAIN_EVM_AGENT_OPERATOR_KEY
 #                                  The hex eth_secp256k1 operator key ITSELF, not
@@ -131,7 +132,7 @@
 #   ./scripts/deploy.sh --init-config       # then edit the file it names
 #   ./scripts/deploy.sh                     # a configured install takes no flags
 #   ./scripts/deploy.sh --host www@svpdev1.example.com \
-#     --public-url https://agents.svpchain.org
+#     --public-url https://evm-agent.svpchain.org
 #   ./scripts/deploy.sh --uninstall --host www@svpdev1.example.com
 #
 set -euo pipefail
@@ -144,20 +145,20 @@ fail() { printf "  ${C_RED}✗${C_RESET} %s\n" "$*" >&2; exit 1; }
 
 # ---- this agent ------------------------------------------------------------
 #
-# AGENT_PORT and AGENT_SEGMENT are the whole route contract, each stated once.
-# The port lands in listen_addr, in the nginx proxy_pass upstream and in the
-# smoke test; the segment lands in the advertised public_url and in the nginx
-# location. Two copies of either fact is how an agent ends up advertising a URL
-# that 404s with every process healthy and nothing in the logs, which is why
-# TestDeployScriptNginxRouteMatchesConfig pins the two renderers together by
-# cross-checking --print-config against --print-nginx.
+# AGENT_PORT is the whole route contract, stated once: it lands in listen_addr,
+# in the nginx proxy_pass upstream and in the smoke test. The advertised URL is
+# whatever --public-url says, verbatim — this agent hangs off its own host at
+# the root rather than off a shared host at a path segment, so there is no
+# segment to keep in sync. Two copies of either fact is how an agent ends up
+# advertising a URL that 404s with every process healthy and nothing in the
+# logs, which is why TestDeployScriptNginxRouteMatchesConfig pins the two
+# renderers together by cross-checking --print-config against --print-nginx.
 #
 # Ahead of the arguments because the config directory is named after
 # AGENT_NAME, and a second spelling of the agent's own name is exactly the kind
 # of duplicated fact the paragraph above is about.
 readonly AGENT_NAME="svpchain-evm-agent"
 readonly AGENT_PORT="8083"
-readonly AGENT_SEGMENT="evm"
 readonly IMAGE_REPO="ghcr.io/svpchain/svpchain-evm-agent"
 
 # The operator key travels as a docker compose secret rather than a bind mount
@@ -209,7 +210,7 @@ unset _i _j
 readonly CONFIG_VARS=(
   SVPCHAIN_DEPLOY_HOST SVPCHAIN_CHAIN_ID SVPCHAIN_GRPC_ADDR SVPCHAIN_COMET_RPC
   SVPCHAIN_INDEXER SVPCHAIN_AGENT_CHAIN_ID SVPCHAIN_AGENT_CHAIN_REST
-  SVPCHAIN_AGENT_PUBLIC_URL SVPCHAIN_EVM_AGENT_OPERATOR_KEY
+  SVPCHAIN_EVM_AGENT_PUBLIC_URL SVPCHAIN_EVM_AGENT_OPERATOR_KEY
   SVPCHAIN_OPERATOR_CAPABILITIES SVPCHAIN_OPERATOR_METADATA SVPCHAIN_INSTALL_DIR
   SVPCHAIN_EVM_RPC SVPCHAIN_EVM_UNISWAP_ROUTER SVPCHAIN_EVM_WSVP
   SVPCHAIN_EVM_ORACLE SVPCHAIN_EVM_BRIDGE SVPCHAIN_EVM_BRIDGE_ROUTES
@@ -282,7 +283,7 @@ comet_rpc="${SVPCHAIN_COMET_RPC:-http://127.0.0.1:26657}"
 indexer="${SVPCHAIN_INDEXER:-http://127.0.0.1:3002}"
 agent_chain_id="${SVPCHAIN_AGENT_CHAIN_ID:-}"
 agent_chain_rest="${SVPCHAIN_AGENT_CHAIN_REST:-}"
-public_url="${SVPCHAIN_AGENT_PUBLIC_URL:-https://agent-testnet.svpchain.org}"
+public_url="${SVPCHAIN_EVM_AGENT_PUBLIC_URL:-https://agent-testnet.svpchain.org}"
 # The operator key MATERIAL, not a path. There is deliberately no flag for it:
 # a hex key in argv is visible in `ps` and lands in shell history. The config
 # file is sourced, so it can compute the value instead of storing it.
@@ -319,7 +320,7 @@ while [[ $# -gt 0 ]]; do
     --indexer)                indexer="$2"; mark_flag SVPCHAIN_INDEXER;           shift 2 ;;
     --agent-chain-id)         agent_chain_id="$2"; mark_flag SVPCHAIN_AGENT_CHAIN_ID;    shift 2 ;;
     --agent-chain-rest)       agent_chain_rest="$2"; mark_flag SVPCHAIN_AGENT_CHAIN_REST;  shift 2 ;;
-    --public-url)             public_url="$2"; mark_flag SVPCHAIN_AGENT_PUBLIC_URL;        shift 2 ;;
+    --public-url)             public_url="$2"; mark_flag SVPCHAIN_EVM_AGENT_PUBLIC_URL;  shift 2 ;;
     --operator-capabilities)  operator_capabilities="$2"; mark_flag SVPCHAIN_OPERATOR_CAPABILITIES; shift 2 ;;
     --operator-metadata)      operator_metadata="$2"; mark_flag SVPCHAIN_OPERATOR_METADATA; shift 2 ;;
     --evm-rpc)                evm_rpc="$2"; mark_flag SVPCHAIN_EVM_RPC;           shift 2 ;;
@@ -363,13 +364,10 @@ done
 : "${host:=${SVPCHAIN_DEPLOY_HOST:-}}"
 
 # Strip a trailing slash (from the flag or env) so the card's
-# "<public_url>/invoke" join stays clean.
+# "<public_url>/invoke" join stays clean. Nothing else is done to it: what you
+# pass is what the agent advertises, and a reverse proxy has to route exactly
+# that URL here.
 public_url="${public_url%/}"
-
-# The advertised URL: the base plus this agent's segment — a reverse proxy
-# routes that path here. Computed once, after the trailing-slash strip, so the
-# config, the nginx block and the preflight banner cannot disagree.
-agent_public_url="${public_url}/${AGENT_SEGMENT}"
 
 # $operator_key holds the key material itself, seeded from the environment
 # above. Empty means keyless — a fully supported mode here: the agent still
@@ -464,7 +462,7 @@ render_agent_toml() {
 # Agent: ${AGENT_NAME}
 
 listen_addr      = "0.0.0.0:${AGENT_PORT}"
-public_url       = "${agent_public_url}"
+public_url       = "${public_url}"
 broadcast_mode   = "server"
 EOF
   [[ -n "$faucet_url" ]] && echo "faucet_base_url         = \"${faucet_url}\""
@@ -750,32 +748,27 @@ load_if_missing() {
   remote_exec "docker load < $remote_tar"
 }
 
-# render_nginx_conf — this agent's location block for the shared reverse proxy.
+# render_nginx_conf — this agent's location block for the reverse proxy.
 #
-# The path convention is that each agent hangs off one base host at its own
-# segment (/perps, /evm, /lending, /research) while listening on its own local
-# port. That mapping lives in exactly two constants — AGENT_SEGMENT and
-# AGENT_PORT, the same two that build public_url and the listener — so a route
-# printed here cannot disagree with what deployed.
+# This agent owns the host it advertises and hangs off its root, so the block
+# is a plain `location /` to its own local port. AGENT_PORT is the only fact
+# shared with the rendered config and the listener, so a route printed here
+# cannot disagree with what deployed.
 #
-# Nothing installs this. The server block it belongs in owns TLS and the base
-# host, which are outside this repo and shared with agents this repo must not
-# know about; four scripts racing to edit one nginx file is how you get a
-# half-written config on reload. Print it, review it, paste it.
+# Nothing installs this. The server block it belongs in owns TLS and the host
+# name, which are outside this repo; two scripts racing to edit one nginx file
+# is how you get a half-written config on reload. Print it, review it, paste it.
 render_nginx_conf() {
   cat <<EOF
 # ${AGENT_NAME} — generated by scripts/deploy.sh --print-nginx
 # Paste into the server block for $(printf '%s' "${public_url#*://}"), then
 # \`nginx -t && systemctl reload nginx\`.
 
-# Bare /${AGENT_SEGMENT} would 404: the location below only matches the trailing slash.
-location = /${AGENT_SEGMENT} { return 301 /${AGENT_SEGMENT}/; }
-
-location /${AGENT_SEGMENT}/ {
-    # Trailing slash strips the /${AGENT_SEGMENT} prefix. The agent binds at root and
-    # serves /.well-known/agent-card.json and /invoke there; it only knows
-    # about /${AGENT_SEGMENT} as the public_url it advertises inside the card.
-    proxy_pass http://127.0.0.1:${AGENT_PORT}/;
+location / {
+    # No prefix to strip: the agent binds at root and serves
+    # /.well-known/agent-card.json and /invoke there, which is exactly the
+    # shape of the public_url it advertises inside the card.
+    proxy_pass http://127.0.0.1:${AGENT_PORT};
 
     proxy_set_header Host              \$host;
     proxy_set_header X-Real-IP         \$remote_addr;
@@ -816,7 +809,7 @@ if [[ "$mode" == "init-config" ]]; then
   # install(1) sets the mode as it writes, so the file is never briefly 0644.
   install -m 600 "$src" "$dst" || fail "could not write ${dst}"
   step "Wrote ${dst} (mode 600)"
-  info "Edit it — at minimum SVPCHAIN_DEPLOY_HOST and SVPCHAIN_AGENT_PUBLIC_URL —"
+  info "Edit it — at minimum SVPCHAIN_DEPLOY_HOST and SVPCHAIN_EVM_AGENT_PUBLIC_URL —"
   info "then run ./scripts/deploy.sh"
   exit 0
 fi
@@ -837,7 +830,7 @@ if [[ "$mode" == "print-env" ]]; then
   env_names=(
     SVPCHAIN_CONFIG_DIR SVPCHAIN_DEPLOY_HOST SVPCHAIN_CHAIN_ID SVPCHAIN_GRPC_ADDR
     SVPCHAIN_COMET_RPC SVPCHAIN_INDEXER SVPCHAIN_AGENT_CHAIN_ID
-    SVPCHAIN_AGENT_CHAIN_REST SVPCHAIN_AGENT_PUBLIC_URL
+    SVPCHAIN_AGENT_CHAIN_REST SVPCHAIN_EVM_AGENT_PUBLIC_URL
     SVPCHAIN_EVM_AGENT_OPERATOR_KEY SVPCHAIN_OPERATOR_CAPABILITIES
     SVPCHAIN_OPERATOR_METADATA SVPCHAIN_EVM_RPC SVPCHAIN_EVM_UNISWAP_ROUTER
     SVPCHAIN_EVM_WSVP SVPCHAIN_EVM_ORACLE SVPCHAIN_EVM_BRIDGE
@@ -981,7 +974,7 @@ mkdir -p "${REPO_DIR}/build"
 
 step "Preflight (operator + remote)"
 info "host=$host image=$image_ref platform=$platform"
-info "install_dir=$install_dir public_url=$agent_public_url"
+info "install_dir=$install_dir public_url=$public_url"
 if [[ -n "$operator_key" ]]; then
   info "  ${AGENT_NAME} :${AGENT_PORT} — operator key set (execution ON)"
 else
@@ -1119,4 +1112,4 @@ else
   fi
 fi
 
-step "Done — $AGENT_NAME $image_tag running on $host (:${AGENT_PORT}, advertised at $agent_public_url)"
+step "Done — $AGENT_NAME $image_tag running on $host (:${AGENT_PORT}, advertised at $public_url)"

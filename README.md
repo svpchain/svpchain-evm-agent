@@ -24,7 +24,7 @@ has the details and the re-sync recipe.
 | | |
 |---|---|
 | Port | 8082 |
-| Advertised at | `<public-url>/evm` |
+| Advertised at | `<public-url>`, verbatim |
 | Image | `ghcr.io/svpchain/svpchain-evm-agent` |
 
 ## Running
@@ -40,7 +40,7 @@ go run ./cmd/svpchain-evm-agent -config cmd/svpchain-evm-agent/agent.toml
 
 ```sh
 ./scripts/deploy.sh --host www@host.example.com \
-  --public-url https://agents.svpchain.org
+  --public-url https://evm-agent.svpchain.org
 ```
 
 ### Settings in a file instead of flags
@@ -88,21 +88,22 @@ a call-time refusal. `--print-routes` shows what would ship;
 
 ## Behind the reverse proxy
 
-The agents share one host, each on its own path: this one answers at
-`<base>/evm` and listens on `127.0.0.1:8083`. Print its location block:
+This agent owns the host it advertises: it answers at the root of
+`SVPCHAIN_EVM_AGENT_PUBLIC_URL` and listens on `127.0.0.1:8083`. Nothing is
+appended to that URL. Print its location block:
 
 ```sh
-./scripts/deploy.sh --public-url https://agents.svpchain.org --print-nginx
+./scripts/deploy.sh --public-url https://evm-agent.svpchain.org --print-nginx
 ```
 
-Nothing installs it. The server block it belongs in owns TLS and the base
-host, both shared with agents this repo must not know about — so paste it,
-then `nginx -t && systemctl reload nginx`.
+Nothing installs it. The server block it belongs in owns TLS and the host name,
+both outside this repo — so paste it, then
+`nginx -t && systemctl reload nginx`.
 
 The route is not cosmetic. `public_url` is advertised inside the Agent Card,
-and a verifier fetches that URL to recompute the capability hash; if nginx
-does not route `/evm` to this port the agent advertises a URL that 404s and
-reads as unverified, with every process healthy and nothing in the logs.
+and a verifier fetches that URL to recompute the capability hash; if nginx does
+not route that host to this port the agent advertises a URL that 404s and reads
+as unverified, with every process healthy and nothing in the logs.
 `TestDeployScriptNginxRouteMatchesConfig` pins the two together.
 
 ## The operator key
