@@ -68,6 +68,8 @@
 #                                  shell history. Set it in the config file, which
 #                                  is sourced and can therefore compute it:
 #                                    SVPCHAIN_EVM_AGENT_OPERATOR_KEY="$(op read …)"
+#                                  Or let --gen-operator-key mint one and wire the
+#                                  config file to it.
 #                                  Unset → keyless, and the execution skills refuse
 #                                  with a reason. Set, it ships to the remote as a
 #                                  docker compose SECRET mounted at
@@ -122,6 +124,21 @@
 # Modes:
 #   --init-config                  Write a starter config file to the config dir
 #                                  at 0600 and exit. Refuses to overwrite.
+#   --gen-operator-key             Mint this agent's operator key into the config
+#                                  dir at 0600, point the config file at it, and
+#                                  print the svp1… address to fund. The key is
+#                                  written, never printed. Refuses if one is
+#                                  already configured: a key is an on-chain
+#                                  identity with a bond against it, so a second
+#                                  one is a new agent, not a replacement.
+#   --register                     Put the DEPLOYED agent on chain, by calling
+#                                  agent_self_register on it over its public URL
+#                                  — or agent_self_update when it is already
+#                                  registered and the served card or the endpoint
+#                                  has moved since. Idempotent: an agent that is
+#                                  already current is left alone.
+#   --bond <coin>                  --register only. Initial bond, e.g.
+#                                  1500000usvp. Default: the module's MinBond.
 #   --print-env                    Show every setting, its resolved value and
 #                                  where it came from. The operator key prints as
 #                                  "set"/"unset", never its value.
@@ -130,6 +147,8 @@
 #
 # Examples:
 #   ./scripts/deploy.sh --init-config       # then edit the file it names
+#   ./scripts/deploy.sh --gen-operator-key  # mint an identity, print its address
+#   ./scripts/deploy.sh --register          # put the deployed agent on chain
 #   ./scripts/deploy.sh                     # a configured install takes no flags
 #   ./scripts/deploy.sh --host www@svpdev1.example.com \
 #     --public-url https://evm-agent.svpchain.org
@@ -266,8 +285,9 @@ fi
 
 # ---- args ------------------------------------------------------------------
 
-mode="install"        # install | uninstall | init-config | print-env
-                      #         | print-config | print-compose | print-nginx
+mode="install"        # install | uninstall | init-config | gen-operator-key
+                      #         | register | print-env | print-config
+                      #         | print-compose | print-nginx
                       #         | print-routes
 
 # Settings a flag overrode, so --print-env can say so. Same space-padded-string
@@ -310,6 +330,11 @@ daily_withdraw_cap="${SVPCHAIN_DAILY_WITHDRAW_CAP_USDC:-}"
 markets_refresh="${SVPCHAIN_MARKETS_REFRESH:-30s}"
 skip_build="0"
 dry_run="0"
+# --register only. Deliberately not a config setting: the bond is a decision
+# made once, at registration, not a property of every deploy — and empty takes
+# the x/agent module's own MinBond, which is the right answer for almost
+# everyone.
+register_bond=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -346,6 +371,9 @@ while [[ $# -gt 0 ]]; do
     --config-dir)             mark_flag SVPCHAIN_CONFIG_DIR; shift 2 ;;
     --no-config)              shift ;;
     --init-config)            mode="init-config";     shift ;;
+    --gen-operator-key)       mode="gen-operator-key"; shift ;;
+    --register)               mode="register";        shift ;;
+    --bond)                   register_bond="$2";     shift 2 ;;
     --print-env)              mode="print-env";       shift ;;
     --skip-build)             skip_build="1";         shift ;;
     --print-config)           mode="print-config";    shift ;;
@@ -811,6 +839,146 @@ if [[ "$mode" == "init-config" ]]; then
   step "Wrote ${dst} (mode 600)"
   info "Edit it — at minimum SVPCHAIN_DEPLOY_HOST and SVPCHAIN_EVM_AGENT_PUBLIC_URL —"
   info "then run ./scripts/deploy.sh"
+  info "For delegated execution this agent also needs an operator key:"
+  info "  ./scripts/deploy.sh --gen-operator-key"
+  exit 0
+fi
+
+# ---- mode: gen-operator-key -----------------------------------------------
+#
+# Mint this agent's operator key and point the config file at it. One step, on
+# purpose: a key generated and not referenced deploys keyless and says nothing,
+# while a config line naming a key that was never generated fails the *source*
+# and takes every other mode down with it — which is exactly why the template
+# ships that line commented out.
+#
+# The key material never passes through this script. cmd/operator-keygen
+# creates the file itself with O_EXCL at 0600 and prints only the derived
+# address, so the secret is never in a shell variable, in argv, or in `set -x`
+# output. What comes back is the one thing needed next: the address to fund.
+#
+# Every refusal below is about the same fact. The key IS this agent's on-chain
+# identity — agent_self_register derives the agent id from it and bonds funds
+# against it — so replacing one strands a registration and its bond with
+# nothing on either side reporting a fault. There is deliberately no --force:
+# an operator who really means to start over deletes the file, which is a
+# harder thing to do by accident than passing a flag.
+#
+# Runs before require_install_args for the same reason init-config does:
+# bootstrapping an identity needs no host.
+if [[ "$mode" == "gen-operator-key" ]]; then
+  key_file="${config_dir}/operator.key"
+  config_file="${config_dir}/config.sh"
+
+  # --no-config asks the script to ignore the file this mode's whole second
+  # half writes to, so there is no coherent thing to do.
+  [[ "$use_config" == "1" ]] \
+    || fail "--gen-operator-key wires up the config file, so it cannot run with --no-config"
+  require_cmd go
+
+  # Already keyed, from whichever layer — --print-env names it. Includes the
+  # case where the key came from the environment for this one invocation, which
+  # is still an identity this agent may be registered under.
+  if [[ -n "$operator_key" ]]; then
+    fail "an operator key is already configured (--print-env says from where) — generating another would be a second identity, not a replacement"
+  fi
+  if [[ -e "$key_file" ]]; then
+    fail "refusing to overwrite ${key_file} — that key may already be registered on chain, with a bond posted against it; move it aside first if you truly mean to start over"
+  fi
+  if [[ ! -f "$config_file" ]]; then
+    fail "no config file at ${config_file} — run ./scripts/deploy.sh --init-config first"
+  fi
+  # Catches what the $operator_key check above cannot: a live assignment whose
+  # command substitution resolved to nothing (an `op read` against a vault that
+  # is not unlocked, say). Rewriting that line would throw away the operator's
+  # own key source.
+  if grep -q '^SVPCHAIN_EVM_AGENT_OPERATOR_KEY=' "$config_file"; then
+    fail "${config_file} already assigns SVPCHAIN_EVM_AGENT_OPERATOR_KEY (it resolved to nothing — a locked vault?); fix or remove that line first"
+  fi
+
+  mkdir -p "$config_dir" || fail "could not create ${config_dir}"
+  repo_dir="$(cd "${SCRIPT_DIR}/.." && pwd)"
+  # GOWORK=off matches the Makefile: a go.work in the parent directory would
+  # resolve this module from sibling checkouts rather than the pinned versions.
+  # stdout is the address and nothing else; the key went to the file.
+  operator_addr="$(cd "$repo_dir" && GOWORK=off go run ./cmd/operator-keygen -out "$key_file")" \
+    || fail "key generation failed; ${key_file} was not written"
+
+  # Rewrite rather than append, so a second run cannot leave two assignments
+  # with the last one silently winning. The pattern is deliberately tight —
+  # an optional '#' immediately followed by the name — because the template
+  # carries indented `#   SVPCHAIN_…_OPERATOR_KEY="$(op read …)"` lines as
+  # documentation, and rewriting one of those would eat the docs and leave the
+  # real line untouched.
+  key_line="SVPCHAIN_EVM_AGENT_OPERATOR_KEY=\"\$(cat \"${key_file}\")\""
+  tmp_config="${config_file}.gen.$$"
+  (
+    umask 077
+    awk -v line="$key_line" '
+      /^#?SVPCHAIN_EVM_AGENT_OPERATOR_KEY=/ && !seen { print line; seen = 1; next }
+      { print }
+      END { if (!seen) { print ""; print line } }
+    ' "$config_file" > "$tmp_config"
+  ) || { rm -f "$tmp_config"; fail "could not rewrite ${config_file}"; }
+  # mv rather than an in-place edit: the config file is never a half-written
+  # file that the next deploy would source.
+  mv "$tmp_config" "$config_file" || { rm -f "$tmp_config"; fail "could not replace ${config_file}"; }
+  chmod 600 "$config_file"
+
+  step "Operator key created"
+  pass "key     ${key_file} (mode 600)"
+  pass "address ${operator_addr}"
+  pass "config  ${config_file} now reads the key from that file"
+  info "Back up the key file. It is this agent's identity: lose it and the"
+  info "on-chain registration and its bond are unreachable, and a new key is a"
+  info "different agent rather than a recovery."
+  info "Next: fund ${operator_addr} with the bond plus gas, deploy, then"
+  info "./scripts/deploy.sh --register"
+  exit 0
+fi
+
+# ---- mode: register -------------------------------------------------------
+#
+# Put the deployed agent on chain, or bring an already-registered one back in
+# line with what it now serves.
+#
+# This cannot be a local operation. What gets published is the sha256 of the
+# agent card as SERVED, so the thing that registers has to be a running agent
+# answering at a URL — hence agent_self_register is a tool on the A2A surface,
+# and this mode is a client of the agent it just deployed rather than another
+# renderer of local state.
+#
+# It runs against $public_url deliberately, not over the ssh connection. That
+# URL is what goes into the registration and what a verifier will fetch, so a
+# registration that succeeds through it has proven the route as a side effect.
+# A host that DNS or nginx does not point here fails at this step instead of
+# registering an endpoint that 404s — see cmd/agent-register for the loopback
+# escape hatch when that is genuinely wanted.
+#
+# The key travels in the environment of the child process rather than in argv,
+# where `ps` would show it. It signs only the auth challenge that proves the
+# caller is the operator; the transaction itself is signed by the agent, on the
+# remote, with the copy the deploy shipped as a compose secret.
+if [[ "$mode" == "register" ]]; then
+  require_cmd go
+  resolve_operator_key
+  [[ -n "$operator_key" ]] \
+    || fail "no operator key configured — registration is the operator proving it holds the key this agent runs as (see --gen-operator-key)"
+
+  repo_dir="$(cd "${SCRIPT_DIR}/.." && pwd)"
+  step "Registering ${AGENT_NAME} at ${public_url}"
+  # A subshell so the export and the cd die with it. GOWORK=off matches the
+  # Makefile: a go.work in the parent directory would resolve this module from
+  # sibling checkouts rather than the versions go.mod pins.
+  (
+    cd "$repo_dir" || exit 1
+    export SVPCHAIN_EVM_AGENT_OPERATOR_KEY="$operator_key"
+    if [[ -n "$register_bond" ]]; then
+      GOWORK=off go run ./cmd/agent-register -url "$public_url" -bond "$register_bond"
+    else
+      GOWORK=off go run ./cmd/agent-register -url "$public_url"
+    fi
+  ) || fail "registration failed"
   exit 0
 fi
 
@@ -1113,3 +1281,12 @@ else
 fi
 
 step "Done — $AGENT_NAME $image_tag running on $host (:${AGENT_PORT}, advertised at $public_url)"
+
+# Deploying does not touch the chain, and a card change that never reaches the
+# registry is the failure this line exists to prevent: verifiers recompute the
+# capability hash from a live fetch, so an agent serving a card that no longer
+# matches its registration reads as unverified with every process healthy.
+if [[ -n "$operator_key" ]]; then
+  info "If the card or the public URL changed, publish it:"
+  info "  ./scripts/deploy.sh --register    (also does the first registration)"
+fi
