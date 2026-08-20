@@ -66,13 +66,12 @@ func TestEVMBroadcastAndDeFiSplitCoverTheFamily(t *testing.T) {
 	}
 }
 
-// The core/perps execution split must partition the full execution surface:
-// non-perps binaries register only the domain-agnostic core, and the perps
-// writes stay unknown there — not refusing — so their cards never advertise
-// perps execution.
+// The core/perps/EVM execution split must partition the full execution surface:
+// non-domain binaries register only the domain-agnostic core, and domain writes
+// stay unknown there — not refusing — so their cards never advertise them.
 func TestExecutionCorePerpsSplit(t *testing.T) {
-	if got := sorted(executionTools); len(got) != len(executionCoreTools)+len(executionPerpsTools) {
-		t.Fatalf("core+perps do not partition executionTools: %v", got)
+	if got := sorted(executionTools); len(got) != len(executionCoreTools)+len(executionPerpsTools)+len(executionEVMTools) {
+		t.Fatalf("core+perps+evm do not partition executionTools: %v", got)
 	}
 
 	core := NewEmpty()
@@ -92,12 +91,25 @@ func TestExecutionCorePerpsSplit(t *testing.T) {
 			t.Errorf("perps write %q must be unknown on a core-only registry, not registered", tool)
 		}
 	}
+	for _, tool := range executionEVMTools {
+		if _, ok := core.Lookup(tool); ok {
+			t.Errorf("EVM write %q must be unknown on a core-only registry, not registered", tool)
+		}
+	}
 
 	perps := NewEmpty()
 	perps.RegisterExecutionPerps(nil)
 	for _, tool := range executionPerpsTools {
 		if _, ok := perps.Lookup(tool); !ok {
 			t.Errorf("perps tool %q missing", tool)
+		}
+	}
+
+	evm := NewEmpty()
+	evm.RegisterExecutionEVM(nil)
+	for _, tool := range executionEVMTools {
+		if _, ok := evm.Lookup(tool); !ok {
+			t.Errorf("EVM execution tool %q missing", tool)
 		}
 	}
 

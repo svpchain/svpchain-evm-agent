@@ -308,10 +308,10 @@ require (
 )
 
 // These agents consume the chain's generated x/*/types (agent, agentwallet,
-// clob) from a sibling checkout. x/agent + x/agentwallet currently live on the
-// feat/delegation-adversarial-tests branch checked out at ../svpagent; point
-// this at ../svpchain-main/protocol once that branch merges.
-replace github.com/dydxprotocol/v4-chain/protocol => ../svpagent/protocol
+// clob) from the sibling protocol checkout. Keep this pointed at the checkout
+// that carries MsgEVMCall as well as the deployed chain binary; otherwise the
+// agent can construct a wrapper the local node does not understand.
+replace github.com/dydxprotocol/v4-chain/protocol => ../../svpchain/protocol
 
 // The replace blocks below are copied VERBATIM from protocol/go.mod, which is
 // their single source of truth (deps_test.go diffs them against it on every

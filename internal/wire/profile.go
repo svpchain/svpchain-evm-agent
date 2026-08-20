@@ -43,13 +43,13 @@ func RegisterDelegationStack(r *toolbridge.Registry, h *tools.Handlers, agent *a
 	r.RegisterExecutionCore(exec)
 }
 
-// EVMProfile serves EVM DeFi: swaps, bridge deposits, ERC-20/721, and the raw
-// EVM broadcast rail. Delegated EVM writes do not exist yet; the execution
-// core still serves identity, self-registration, and settlement.
+// EVMProfile serves EVM DeFi: swaps, bridge deposits, ERC-20/721, the raw EVM
+// broadcast rail, and the chain's whitelisted delegated EVM contract calls.
 var EVMProfile = Profile{
 	Name: "evm",
 	Register: func(r *toolbridge.Registry, h *tools.Handlers, agent *agentchain.Service, exec *delegated.Service) {
 		r.RegisterEVM(h)
 		RegisterDelegationStack(r, h, agent, exec)
+		r.RegisterExecutionEVM(exec)
 	},
 }

@@ -20,6 +20,7 @@ var identity = a2aserver.CardIdentity{
 	Description: "EVM DeFi agent for SVP-Chain: swap quoting and building, bridge " +
 		"deposits, ERC-20/ERC-721 transfers and approvals, raw EVM broadcast, " +
 		"self-service auth, faucet, agent registry, delegations, and SVP-DT " +
-		"settlement and self-registration (delegated EVM writes are future work; " +
-		"builds are caller-signed).",
+		"settlement and self-registration. Whitelisted delegated EVM calls and " +
+		"native-SVP transfers use " +
+		"MsgAgentExecDelegated; all other EVM builds are caller-signed.",
 }

@@ -13,6 +13,14 @@ var executionPerpsTools = []string{
 	"execute_deposit_to_subaccount",
 }
 
+// executionEVMTools are EVM-domain delegated writes. They are registered only
+// by the EVM profile; other profiles must not advertise a contract-call surface
+// they do not own.
+var executionEVMTools = []string{
+	"execute_evm_call",
+	"execute_evm_native_transfer",
+}
+
 // executionCoreTools are the domain-agnostic execution operations — identity,
 // self-registration, and settlement — that every delegation-capable binary
 // serves regardless of which domain it executes in.
@@ -28,7 +36,10 @@ var executionCoreTools = []string{
 // executionTools is the execution skill's full operation set, shared by both
 // the live and the refusing registration so the advertised surface is
 // identical either way.
-var executionTools = append(append([]string{}, executionPerpsTools...), executionCoreTools...)
+var executionTools = append(
+	append(append([]string{}, executionPerpsTools...), executionEVMTools...),
+	executionCoreTools...,
+)
 
 // keylessReason is the refusal for execution tools on a deployment with no
 // operator key; the skill is still advertised so callers learn the requirement
@@ -75,9 +86,24 @@ func (r *Registry) RegisterExecutionPerps(s *delegated.Service) {
 	r.add(SkillExecution, "execute_deposit_to_subaccount", adaptStrictNative(s.ExecuteDepositToSubaccount))
 }
 
+// RegisterExecutionEVM adds the delegated EVM-call surface. A nil service
+// registers the same name as a refusal, matching the rest of the execution
+// family on keyless deployments.
+func (r *Registry) RegisterExecutionEVM(s *delegated.Service) {
+	if s == nil {
+		for _, tool := range executionEVMTools {
+			r.addRefusing(SkillExecution, tool, keylessReason)
+		}
+		return
+	}
+	r.add(SkillExecution, "execute_evm_call", adaptStrictNative(s.ExecuteEVMCall))
+	r.add(SkillExecution, "execute_evm_native_transfer", adaptStrictNative(s.ExecuteEVMNativeTransfer))
+}
+
 // RegisterExecution adds the full delegated-execution surface: the perps
 // writes plus the domain-agnostic core.
 func (r *Registry) RegisterExecution(s *delegated.Service) {
 	r.RegisterExecutionPerps(s)
+	r.RegisterExecutionEVM(s)
 	r.RegisterExecutionCore(s)
 }

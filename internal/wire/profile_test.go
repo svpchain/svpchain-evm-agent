@@ -63,7 +63,7 @@ func TestEVMProfileServesTheDelegationStack(t *testing.T) {
 		"auth_challenge", "auth_verify",
 		"get_agent", "build_register_agent",
 		"get_delegation", "build_create_delegation",
-		"agent_identity", "agent_self_register", "execute_record_spend", "agent_claim",
+		"agent_identity", "agent_self_register", "execute_record_spend", "execute_evm_call", "execute_evm_native_transfer", "agent_claim",
 	} {
 		if _, ok := r.Lookup(tool); !ok {
 			t.Errorf("profile %s missing delegation-stack tool %q", EVMProfile.Name, tool)
