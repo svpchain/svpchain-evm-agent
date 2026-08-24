@@ -36,7 +36,7 @@ var expectedOps = map[string][]string{
 	SkillAuth:      {"auth_challenge", "auth_verify"},
 	SkillFaucet:    {"list_faucet_tokens", "faucet_claim"},
 	SkillEVM: {
-		"broadcast_evm_tx", "evm_tx_status", "quote_swap", "build_token_approval",
+		"broadcast_evm_tx", "evm_tx_status", "list_evm_contracts", "list_swap_pairs", "quote_swap", "build_token_approval",
 		"build_swap", "build_bridge_deposit", "build_bridge_deposit_inbound",
 		"build_erc20_transfer", "build_erc20_approve", "build_erc20_transfer_from",
 		"build_erc721_transfer_from", "build_erc721_safe_transfer_from",
@@ -123,10 +123,10 @@ func TestRegistryCoversEveryExpectedTool(t *testing.T) {
 			}
 		}
 	}
-	// 52 = the 64-tool MCP surface minus the 12 Lendora tools this binary does
+	// 54 = the 66-tool MCP surface minus the 12 Lendora tools this binary does
 	// not bridge.
-	if total != 52 {
-		t.Fatalf("expected table lists %d tools; the bridged surface is 52 — fix the table", total)
+	if total != 54 {
+		t.Fatalf("expected table lists %d tools; the bridged surface is 54 — fix the table", total)
 	}
 
 	// The reverse direction: nothing extra is registered under these skills.

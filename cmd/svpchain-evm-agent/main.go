@@ -2,7 +2,7 @@
 // quoting and building, bridge deposits, ERC-20/721 transfers and approvals,
 // raw EVM broadcast, self-service auth, faucet, the chain's agent/agentwallet
 // modules, and the SVP-DT execution core (identity, self-registration,
-// settlement) when an operator key is configured. Whitelisted delegated EVM
+// settlement) when an operator key is configured. Delegated EVM contract
 // calls use MsgAgentExecDelegated; all other EVM builds are caller-signed.
 //
 // Everything it serves is implemented under internal/, which was the shared

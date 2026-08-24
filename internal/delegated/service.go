@@ -27,7 +27,6 @@ import (
 	"github.com/svpchain/svpchain-evm-agent/internal/operator"
 
 	"github.com/cosmos/evm/crypto/ethsecp256k1"
-	"github.com/ethereum/go-ethereum/crypto"
 )
 
 // Actions in the chain's delegatable-message namespace. Only these four are
@@ -41,26 +40,9 @@ const (
 	ActionBatchCancel = "clob.batch_cancel"
 	ActionDeposit     = "sending.deposit_to_subaccount"
 
-	ActionLendoraSupply     = "lendora.supply"
-	ActionLendoraRedeem     = "lendora.redeem"
-	ActionLendoraWithdraw   = "lendora.withdraw"
-	ActionLendoraBorrow     = "lendora.borrow"
-	ActionLendoraRepay      = "lendora.repay"
+	ActionEVMContractCall   = "evm.contract_call"
 	ActionEVMNativeTransfer = "evm.native_transfer"
 )
-
-var delegatedEVMSelectorActions = map[string]string{
-	evmSelectorKey("mint(uint256)"):             ActionLendoraSupply,
-	evmSelectorKey("redeem(uint256)"):           ActionLendoraRedeem,
-	evmSelectorKey("redeemUnderlying(uint256)"): ActionLendoraWithdraw,
-	evmSelectorKey("borrow(uint256)"):           ActionLendoraBorrow,
-	evmSelectorKey("repayBorrow(uint256)"):      ActionLendoraRepay,
-}
-
-func evmSelectorKey(signature string) string {
-	hash := crypto.Keccak256([]byte(signature))
-	return string(hash[:wallettypes.EVMSelectorLen])
-}
 
 // Config wires a Service.
 type Config struct {
@@ -91,6 +73,20 @@ type Config struct {
 	Endpoint     string
 	Capabilities []string
 	Metadata     string
+
+	// Contracts is the deployment's reviewed EVM contract directory. The
+	// high-level contract-method tool resolves calls against this list before
+	// turning them into the chain's raw MsgEVMCall payload.
+	Contracts []ConfiguredContract
+}
+
+// ConfiguredContract is one reviewed contract whose methods may be encoded by
+// ExecuteEVMContractMethod. IDs are discovery metadata; the execution input
+// names the canonical address so the caller can bind it in an SVP-DT task.
+type ConfiguredContract struct {
+	ID      string
+	Address string
+	Methods []string
 }
 
 // Service executes delegated orders under SVP-DT credentials and manages the
@@ -127,6 +123,8 @@ type Service struct {
 	epochCacheTTL int64
 
 	now func() int64
+
+	contracts map[string]ConfiguredContract
 }
 
 type epochEntry struct {
@@ -147,6 +145,7 @@ func New(cfg Config) *Service {
 		epochCache:     map[[32]byte]epochEntry{},
 		epochCacheTTL:  10,
 		now:            func() int64 { return time.Now().Unix() },
+		contracts:      contractsByAddress(cfg.Contracts),
 	}
 }
 
@@ -477,13 +476,15 @@ func (s *Service) ExecuteDepositToSubaccount(ctx context.Context, in ExecDeposit
 }
 
 // EVMCallParams is the delegated EVM-call surface supported by the chain.
-// Data is ABI calldata, including its 0x-prefixed selector. The protocol
-// currently permits only the Lendora selectors in delegatedEVMSelectorActions;
-// the agent repeats that check before it signs, and the chain authoritatively
-// checks it again during Authorize.
+// Data is ABI calldata, including its 0x-prefixed selector. Value is an
+// optional canonical decimal asvp amount forwarded as EVM msg.value for
+// payable methods. The signed SVP-DT Task caveat grants this contract method;
+// ABI arguments are selected by the caller within that method's contract-defined
+// semantics.
 type EVMCallParams struct {
 	Contract string `json:"contract"`
 	Data     string `json:"data"`
+	Value    string `json:"value,omitempty"`
 }
 
 type ExecEVMCallInput struct {
@@ -513,28 +514,26 @@ func (s *Service) ExecuteEVMCall(ctx context.Context, in ExecEVMCallInput) (Exec
 	if len(data) < wallettypes.EVMSelectorLen {
 		return ExecResult{}, fmt.Errorf("calldata carries no selector")
 	}
-	// Every selector currently admitted by the protocol takes exactly one
-	// uint256 argument. Keep the local preflight aligned so failed requests do
-	// not consume an operator sequence or a transaction fee.
-	if len(data) != wallettypes.EVMSelectorLen+32 {
-		return ExecResult{}, fmt.Errorf("delegated EVM calldata must contain one uint256 argument")
-	}
-	action, ok := delegatedEVMSelectorActions[string(data[:wallettypes.EVMSelectorLen])]
-	if !ok {
-		return ExecResult{}, fmt.Errorf("EVM selector 0x%s is not delegated", hex.EncodeToString(data[:wallettypes.EVMSelectorLen]))
-	}
-	if err := preflight(verified, action, 0); err != nil {
+	if err := preflight(verified, ActionEVMContractCall, 0); err != nil {
 		return ExecResult{}, err
 	}
 	if !verified.Effective.Contracts.Has(in.Call.Contract) {
 		return ExecResult{}, fmt.Errorf("credential does not grant contract %q", in.Call.Contract)
 	}
-
-	return s.execute(ctx, tokens, verified, &wallettypes.MsgEVMCall{
+	inner := &wallettypes.MsgEVMCall{
 		Principal: verified.Principal,
 		Contract:  in.Call.Contract,
 		Data:      data,
-	})
+		Value:     in.Call.Value,
+	}
+	if err := inner.ValidateBasic(); err != nil {
+		return ExecResult{}, err
+	}
+	if verified.Effective.Task != inner.DelegationMethodTask() {
+		return ExecResult{}, fmt.Errorf("credential does not bind EVM contract method")
+	}
+
+	return s.execute(ctx, tokens, verified, inner)
 }
 
 // EVMNativeTransferParams describes a native-SVP transfer under a delegation.

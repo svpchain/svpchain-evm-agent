@@ -16,27 +16,38 @@ import (
 const delegatedEVMTestContract = "0x000000000000000000000000000000000000c07e"
 const delegatedEVMRecipient = "0x00000000000000000000000000000000000000dd"
 
-func calldata(signature string) string {
+func calldata(signature string, words int) string {
 	selector := crypto.Keccak256([]byte(signature))[:wallettypes.EVMSelectorLen]
-	data := append(selector, make([]byte, 32)...)
+	data := append(selector, make([]byte, words*32)...)
 	return "0x" + hex.EncodeToString(data)
 }
 
-func evmProof(t *testing.T, f *fixture) []string {
+func evmProof(t *testing.T, f *fixture, call EVMCallParams) []string {
 	t.Helper()
+	data, err := hex.DecodeString(strings.TrimPrefix(call.Data, "0x"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := (&wallettypes.MsgEVMCall{
+		Principal: testDelegator,
+		Contract:  call.Contract,
+		Data:      data,
+	}).DelegationMethodTask()
 	return f.issue(t, func(p *svpdt.IssueParams) {
-		p.Caveats.Actions = svpdt.StringSet{ActionLendoraSupply}
+		p.Caveats.Actions = svpdt.StringSet{ActionEVMContractCall}
 		p.Caveats.Contracts = svpdt.StringSet{delegatedEVMTestContract}
+		p.Caveats.Task = task
 	})
 }
 
 func TestExecuteEVMCallBuildsDelegatedWrapper(t *testing.T) {
 	f := newFixture(t)
-	data := calldata("mint(uint256)")
+	data := calldata("transfer(address,uint256)", 2)
+	call := EVMCallParams{Contract: delegatedEVMTestContract, Data: data, Value: "25"}
 
 	res, err := f.svc.ExecuteEVMCall(context.Background(), ExecEVMCallInput{
-		Proof: evmProof(t, f),
-		Call:  EVMCallParams{Contract: delegatedEVMTestContract, Data: data},
+		Proof: evmProof(t, f, call),
+		Call:  call,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +69,7 @@ func TestExecuteEVMCallBuildsDelegatedWrapper(t *testing.T) {
 	if wrapper.InnerMsg.TypeUrl != "/dydxprotocol.agentwallet.MsgEVMCall" {
 		t.Errorf("inner type URL = %q", wrapper.InnerMsg.TypeUrl)
 	}
-	if inner.Principal != testDelegator || inner.Contract != delegatedEVMTestContract || "0x"+hex.EncodeToString(inner.Data) != data {
+	if inner.Principal != testDelegator || inner.Contract != delegatedEVMTestContract || inner.Value != "25" || "0x"+hex.EncodeToString(inner.Data) != data {
 		t.Errorf("inner EVM call = %+v", inner)
 	}
 }
@@ -71,27 +82,29 @@ func TestExecuteEVMCallRefusals(t *testing.T) {
 	}{
 		"ungranted action": {
 			proof: func(t *testing.T, f *fixture) []string { return f.issue(t, nil) },
-			call:  EVMCallParams{Contract: delegatedEVMTestContract, Data: calldata("mint(uint256)")},
+			call:  EVMCallParams{Contract: delegatedEVMTestContract, Data: calldata("transfer(address,uint256)", 2)},
 			want:  "does not grant action",
 		},
 		"ungranted contract": {
 			proof: func(t *testing.T, f *fixture) []string {
 				return f.issue(t, func(p *svpdt.IssueParams) {
-					p.Caveats.Actions = svpdt.StringSet{ActionLendoraSupply}
+					p.Caveats.Actions = svpdt.StringSet{ActionEVMContractCall}
 				})
 			},
-			call: EVMCallParams{Contract: delegatedEVMTestContract, Data: calldata("mint(uint256)")},
+			call: EVMCallParams{Contract: delegatedEVMTestContract, Data: calldata("transfer(address,uint256)", 2)},
 			want: "does not grant contract",
 		},
-		"unknown selector": {
-			proof: evmProof,
-			call:  EVMCallParams{Contract: delegatedEVMTestContract, Data: "0xdeadbeef" + strings.Repeat("00", 32)},
-			want:  "is not delegated",
+		"method task mismatch": {
+			proof: func(t *testing.T, f *fixture) []string {
+				return evmProof(t, f, EVMCallParams{Contract: delegatedEVMTestContract, Data: calldata("transfer(address,uint256)", 2)})
+			},
+			call: EVMCallParams{Contract: delegatedEVMTestContract, Data: calldata("approve(address,uint256)", 2)},
+			want: "does not bind EVM contract method",
 		},
 		"malformed calldata": {
-			proof: evmProof,
-			call:  EVMCallParams{Contract: delegatedEVMTestContract, Data: "0x" + hex.EncodeToString(crypto.Keccak256([]byte("mint(uint256)"))[:4])},
-			want:  "one uint256",
+			proof: func(t *testing.T, f *fixture) []string { return f.issue(t, nil) },
+			call:  EVMCallParams{Contract: delegatedEVMTestContract, Data: "0x1234"},
+			want:  "calldata carries no selector",
 		},
 	}
 
@@ -107,6 +120,96 @@ func TestExecuteEVMCallRefusals(t *testing.T) {
 			}
 			if f.broadcast.txBytes != nil {
 				t.Error("a refused delegated EVM call must not reach broadcast")
+			}
+		})
+	}
+}
+
+func TestExecuteEVMContractMethodEncodesConfiguredCall(t *testing.T) {
+	f := newFixture(t)
+	f.svc.contracts = contractsByAddress([]ConfiguredContract{{
+		ID: delegatedEVMTestContract, Address: delegatedEVMTestContract,
+		Methods: []string{"transfer(address,uint256)"},
+	}})
+	data := "0xa9059cbb00000000000000000000000000000000000000000000000000000000000000dd0000000000000000000000000000000000000000000000000000000000000019"
+	call := EVMCallParams{Contract: delegatedEVMTestContract, Data: data, Value: "25"}
+	_, err := f.svc.ExecuteEVMContractMethod(context.Background(), ExecEVMContractMethodInput{
+		Proof: evmProof(t, f, call),
+		Call: EVMContractMethodCall{
+			Contract: delegatedEVMTestContract,
+			Method:   "transfer(address,uint256)",
+			Args:     []any{delegatedEVMRecipient, "25"},
+			Value:    "25",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wrapper wallettypes.MsgAgentExecDelegated
+	decodeSoleTxMsg(t, f.broadcast.txBytes, "/dydxprotocol.agentwallet.MsgAgentExecDelegated", &wrapper)
+	var inner wallettypes.MsgEVMCall
+	if err := proto.Unmarshal(wrapper.InnerMsg.Value, &inner); err != nil {
+		t.Fatal(err)
+	}
+	if got := "0x" + hex.EncodeToString(inner.Data); got != data {
+		t.Errorf("calldata = %s, want %s", got, data)
+	}
+	if inner.Value != "25" {
+		t.Errorf("value = %q, want 25", inner.Value)
+	}
+}
+
+func TestExecuteEVMContractMethodRefusesUnconfiguredMethod(t *testing.T) {
+	f := newFixture(t)
+	f.svc.contracts = contractsByAddress([]ConfiguredContract{{
+		ID: delegatedEVMTestContract, Address: delegatedEVMTestContract,
+		Methods: []string{"transfer(address,uint256)"},
+	}})
+	_, err := f.svc.ExecuteEVMContractMethod(context.Background(), ExecEVMContractMethodInput{
+		Call: EVMContractMethodCall{
+			Contract: delegatedEVMTestContract,
+			Method:   "approve(address,uint256)",
+			Args:     []any{delegatedEVMRecipient, "25"},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "not configured") {
+		t.Errorf("error = %v, want unconfigured method", err)
+	}
+	if f.broadcast.txBytes != nil {
+		t.Error("a refused typed EVM call must not reach broadcast")
+	}
+}
+
+func TestEncodeConfiguredMethodSupportsRouterAndBridgeArguments(t *testing.T) {
+	const addressA = "0x0000000000000000000000000000000000000001"
+	const addressB = "0x0000000000000000000000000000000000000002"
+	const bytes32 = "0x00000000000000000000000000000000000000000000000000000000000000dd"
+	tests := []struct {
+		name   string
+		method string
+		args   []any
+	}{
+		{
+			name:   "router address array",
+			method: "swapExactTokensForTokens(uint256,uint256,address[],address,uint256)",
+			args:   []any{"10", "9", []any{addressA, addressB}, delegatedEVMRecipient, "123"},
+		},
+		{
+			name:   "bridge fixed bytes",
+			method: "deposit(address,uint256,uint16,bytes32,bytes32)",
+			args:   []any{addressA, "10", "2517", bytes32, bytes32},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := encodeConfiguredMethod(ConfiguredContract{
+				ID: "test", Address: delegatedEVMTestContract, Methods: []string{tc.method},
+			}, tc.method, tc.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(data) < wallettypes.EVMSelectorLen || hex.EncodeToString(data[:wallettypes.EVMSelectorLen]) != hex.EncodeToString(crypto.Keccak256([]byte(tc.method))[:wallettypes.EVMSelectorLen]) {
+				t.Errorf("method %q has wrong selector %x", tc.method, data[:wallettypes.EVMSelectorLen])
 			}
 		})
 	}

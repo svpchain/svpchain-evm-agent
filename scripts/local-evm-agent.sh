@@ -3,6 +3,9 @@
 #
 # Usage:
 #   ./scripts/local-evm-agent.sh start --operator-key-file ./operator.key
+#   # contracts.toml at the repo root is loaded automatically.
+#   ./scripts/local-evm-agent.sh start --operator-key-file ./operator.key
+#   # Use --contracts-file to use a different directory.
 #   ./scripts/local-evm-agent.sh register [--bond 5000asvp]
 #   ./scripts/local-evm-agent.sh update
 #   ./scripts/local-evm-agent.sh stop|status|logs|config
@@ -20,7 +23,7 @@
 # EVM_AGENT_LOCAL_PROTOCOL_DIR, EVM_AGENT_LOCAL_CHAIN_SCRIPT,
 # EVM_AGENT_LOCAL_CHAIN_HOME, EVM_AGENT_LOCAL_CHAIN_BINARY,
 # EVM_AGENT_LOCAL_FUNDER_KEY, EVM_AGENT_LOCAL_OPERATOR_MIN_BALANCE, and
-# EVM_AGENT_LOCAL_FUND_FEE.
+# EVM_AGENT_LOCAL_FUND_FEE, and EVM_AGENT_LOCAL_CONTRACTS_FILE.
 
 set -euo pipefail
 
@@ -48,6 +51,7 @@ local_chain_funder_key="${EVM_AGENT_LOCAL_FUNDER_KEY:-localval}"
 local_chain_binary="${EVM_AGENT_LOCAL_CHAIN_BINARY:-}"
 operator_min_balance="${EVM_AGENT_LOCAL_OPERATOR_MIN_BALANCE:-20000000000000000000asvp}"
 fund_fee="${EVM_AGENT_LOCAL_FUND_FEE:-500000asvp}"
+contracts_file="${EVM_AGENT_LOCAL_CONTRACTS_FILE:-${REPO_DIR}/contracts.toml}"
 registration_bond=""
 skip_build=0
 listen_overridden=0
@@ -70,6 +74,7 @@ while [[ $# -gt 0 ]]; do
     --public-url) public_url="${2:-}"; shift 2 ;;
     --operator-key-file) operator_key_file="${2:-}"; shift 2 ;;
     --operator-capabilities) operator_capabilities="${2:-}"; shift 2 ;;
+    --contracts-file) contracts_file="${2:-}"; shift 2 ;;
     --skip-build) skip_build=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) fail "unknown argument: $1" ;;
@@ -259,6 +264,15 @@ key_file     = "${operator_key_file}"
 capabilities = $(toml_capabilities)
 metadata     = "local development EVM agent"
 EOF
+  fi
+  if [[ -n "${contracts_file}" ]]; then
+    [[ -f "${contracts_file}" ]] || fail "contracts file not found: ${contracts_file}"
+    cat <<EOF
+
+# Contract directory included from ${contracts_file}.
+# It is discovery metadata only; it does not authorize delegated calls.
+EOF
+    cat "${contracts_file}"
   fi
 }
 

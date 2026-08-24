@@ -38,11 +38,20 @@ type ChainDeps struct {
 type EVMDeps struct {
 	Assembler *builder.EVMAssembler
 
+	// Contracts is an operator-curated, bounded directory exposed by
+	// list_evm_contracts. It is not a transaction or delegation allowlist.
+	Contracts []ConfiguredEVMContract
+
 	// Uniswap binds the swap tools (quote_swap / build_token_approval /
 	// build_swap) to a UniswapV2Router02 + WSVP deployment. Nil unless both
 	// evm_uniswap_router_addr and evm_wsvp_addr are configured (which also requires
 	// evm_rpc_url); the swap tools check it and refuse otherwise.
 	Uniswap *builder.UniswapV2
+
+	// UniswapFactory is the read-only Pair discovery binding. It is optional
+	// so existing router-only deployments keep serving swaps; list_swap_pairs
+	// explains when the Factory address has not been configured.
+	UniswapFactory *builder.UniswapV2Factory
 
 	// Oracle binds get_oracle_price to an OffChainAggregator price feed
 	// deployment. Nil unless evm_oracle_addr is configured (which also requires
@@ -72,6 +81,19 @@ type EVMDeps struct {
 	// inbound route lookups to (<foreign> -> home). Zero when the EVM family is
 	// unconfigured.
 	HomeChainID uint64
+}
+
+// ConfiguredEVMContract is a discoverable contract alias supplied by the
+// deployment configuration. Address is canonical lowercase 0x form so it can
+// be copied directly into an EVM delegation's contracts limit.
+type ConfiguredEVMContract struct {
+	ID          string
+	Address     string
+	Kind        string
+	Symbol      string
+	Decimals    int64
+	Methods     []string
+	Description string
 }
 
 // ForeignChain is the per-foreign-chain bundle for inbound bridging: the EVM

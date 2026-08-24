@@ -155,6 +155,42 @@ func TestDeployScriptConfigParses(t *testing.T) {
 	}
 }
 
+func TestDeployScriptRendersConfiguredContractDirectory(t *testing.T) {
+	script, err := filepath.Abs(filepath.Join("scripts", "deploy.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	contracts := filepath.Join(dir, "contracts.toml")
+	if err := os.WriteFile(contracts, []byte(`[[evm.contract]]
+id      = "usdc"
+address = "0x000000000000000000000000000000000000c07e"
+kind    = "erc20"
+symbol  = "USDC"
+decimals = 6
+methods = ["transfer(address,uint256)"]
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := exec.Command("bash", script, "--no-config", "--print-config",
+		"--host", "www@agent.example.com", "--evm-contracts-file", contracts).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "agent.toml")
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("rendered config does not parse/validate:\n%s\nerror: %v", out, err)
+	}
+	if len(cfg.EVM.Contracts) != 1 || cfg.EVM.Contracts[0].ID != "usdc" {
+		t.Fatalf("contracts = %+v", cfg.EVM.Contracts)
+	}
+}
+
 // tomlValue returns the quoted value of the first `key = "…"` line in a
 // rendered config. Deliberately naive: it reads what the script printed,
 // before config.Load rewrites relative paths.

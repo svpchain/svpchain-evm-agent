@@ -94,6 +94,11 @@ SVPCHAIN_EVM_BRIDGE="0x78Aca10afd5b28E838ECf0De20c5621CE39D9F4a"
 #SVPCHAIN_EVM_BRIDGE_ROUTES_SRC="$HOME/.config/svpchain-evm-agent/routes.json"
 SVPCHAIN_EVM_BRIDGE_SOURCE_CHAIN_ID="2517"
 
+# Contract discovery is intentionally a small manual directory, not a testnet
+# index. This TOML file is merged into generated agent.toml. Its addresses are
+# still subject to root delegation and SVP-DT task `contracts` limits.
+#SVPCHAIN_EVM_CONTRACTS_FILE="$HOME/.config/svpchain-evm-agent/contracts.toml"
+
 # ";"-separated chainId,rpcUrl,bridgeAddr triples for the far side of a bridge.
 #SVPCHAIN_EVM_FOREIGN_CHAINS="421614,https://sepolia-rollup.arbitrum.io/rpc,0xB6c74A758E3fA7bf57c22037821f7cA974d0CdfD"
 

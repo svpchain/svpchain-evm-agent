@@ -88,6 +88,21 @@ evm.swap.uniswap_router_addr = "0x0000000000000000000000000000000000000001"
 	}
 }
 
+func TestSwapFactoryEnablesPairDiscovery(t *testing.T) {
+	cfg, err := Load(writeConfig(t, minimal+`
+dex_chain.evm_rpc_url        = "http://127.0.0.1:8545"
+evm.swap.uniswap_router_addr = "0x0000000000000000000000000000000000000001"
+evm.swap.wsvp_addr           = "0x0000000000000000000000000000000000000002"
+evm.swap.factory_addr        = "0x0000000000000000000000000000000000000003"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.EVM.Swap.FactoryAddr != "0x0000000000000000000000000000000000000003" {
+		t.Errorf("factory_addr = %q", cfg.EVM.Swap.FactoryAddr)
+	}
+}
+
 func TestBridgeRequiresAllThreeAndEVMRPC(t *testing.T) {
 	body := minimal + `
 evm.bridge.addr = "0x0000000000000000000000000000000000000002"
@@ -106,6 +121,67 @@ bridge_addr = "0x0000000000000000000000000000000000000003"
 `
 	if _, err := Load(writeConfig(t, body)); err == nil || !strings.Contains(err.Error(), "requires the bridge") {
 		t.Errorf("foreign chain without home bridge must fail, got %v", err)
+	}
+}
+
+func TestConfiguredEVMContractsAreValidated(t *testing.T) {
+	cfg, err := Load(writeConfig(t, minimal+`
+[[evm.contract]]
+id          = "usdc"
+address     = "0x000000000000000000000000000000000000c07e"
+kind        = "erc20"
+symbol      = "USDC"
+decimals    = 6
+methods     = ["transfer(address,uint256)", "approve(address,uint256)"]
+description = "Test USDC"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.EVM.Contracts) != 1 || cfg.EVM.Contracts[0].ID != "usdc" {
+		t.Fatalf("contracts = %+v", cfg.EVM.Contracts)
+	}
+}
+
+func TestConfiguredEVMContractsRejectUnsafeDirectoryEntries(t *testing.T) {
+	for name, tc := range map[string]struct {
+		body string
+		want string
+	}{
+		"missing id": {
+			body: `[[evm.contract]]
+address = "0x000000000000000000000000000000000000c07e"`,
+			want: "id is required",
+		},
+		"mixed case address": {
+			body: `[[evm.contract]]
+id = "usdc"
+address = "0x000000000000000000000000000000000000C07E"`,
+			want: "lowercase 0x address",
+		},
+		"duplicate alias": {
+			body: `[[evm.contract]]
+id = "usdc"
+address = "0x000000000000000000000000000000000000c07e"
+[[evm.contract]]
+id = "USDC"
+address = "0x00000000000000000000000000000000000000dd"`,
+			want: "declared more than once",
+		},
+		"invalid method signature": {
+			body: `[[evm.contract]]
+id = "usdc"
+address = "0x000000000000000000000000000000000000c07e"
+methods = ["transfer(address, uint256)"]`,
+			want: "must be a whitespace-free ABI signature",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Load(writeConfig(t, minimal+"\n"+tc.body))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 

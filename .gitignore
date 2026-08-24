@@ -8,3 +8,6 @@
 
 # Operator key material. Never committed.
 *.key
+
+# Local EVM contract directory. Keep deployment-specific addresses local.
+/contracts.toml

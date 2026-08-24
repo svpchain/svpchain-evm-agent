@@ -104,6 +104,8 @@ func (r *Registry) RegisterEVMBroadcast(h *tools.Handlers) {
 
 // RegisterEVMDeFi adds the EVM DeFi surface: swap, bridge, ERC-20/721.
 func (r *Registry) RegisterEVMDeFi(h *tools.Handlers) {
+	r.add(SkillEVM, "list_evm_contracts", adapt(h.ListEVMContracts))
+	r.add(SkillEVM, "list_swap_pairs", adapt(h.ListSwapPairs))
 	r.add(SkillEVM, "quote_swap", adapt(h.QuoteSwap))
 	r.add(SkillEVM, "build_token_approval", adapt(h.BuildTokenApproval))
 	r.add(SkillEVM, "build_swap", adapt(h.BuildSwap))

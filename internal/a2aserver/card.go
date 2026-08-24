@@ -132,7 +132,7 @@ var skillMetas = []skillMeta{
 	{
 		id:   toolbridge.SkillExecution,
 		name: "SVP-Chain Delegated Execution",
-		desc: "Place and cancel orders, make whitelisted EVM contract calls or native-SVP transfers, and deposit the user's own wallet USDC into " +
+		desc: "Place and cancel orders, make configured delegated EVM contract-method calls (typed arguments or raw calldata) or native-SVP transfers, and deposit the user's own wallet USDC into " +
 			"their subaccount — on behalf of a user under an SVP-DT delegation " +
 			"credential: the agent verifies the credential chain, wraps the message in " +
 			"MsgAgentExecDelegated, signs as the registered operator, and broadcasts. The " +
@@ -149,7 +149,7 @@ var skillMetas = []skillMeta{
 			"Each execute tool nests its parameters under a wrapper key — " +
 			`"order" (execute_place_order), "cancel" (execute_cancel_order, ` +
 			`execute_batch_cancel), "deposit" (execute_deposit_to_subaccount), ` +
-			`"call" (execute_evm_call), "transfer" (execute_evm_native_transfer), ` +
+			`"call" (execute_evm_call, execute_evm_contract_method), "transfer" (execute_evm_native_transfer), ` +
 			`"record" (execute_record_spend) — ` +
 			"never flat in args; an unknown top-level args key is refused.",
 		tags: []string{"execution", "trading", "deposit", "settlement", "delegation", "svp-dt"},
@@ -160,6 +160,8 @@ var skillMetas = []skillMeta{
 				`text: {"skill":"svpchain-execution","tool":"execute_deposit_to_subaccount","args":{"deposit":{"subaccount_number":1,"human_usdc":"10"}}}`,
 			`message.metadata: {"svp.delegation/v1":{"tokens":["<base64 token>", "…"]}} · ` +
 				`text: {"skill":"svpchain-execution","tool":"execute_evm_call","args":{"call":{"contract":"0x…","data":"0x…"}}}`,
+			`message.metadata: {"svp.delegation/v1":{"tokens":["<base64 token>", "…"]}} · ` +
+				`text: {"skill":"svpchain-execution","tool":"execute_evm_contract_method","args":{"call":{"contract":"0x…","method":"transfer(address,uint256)","args":["0x…","1000000"]}}}`,
 			`message.metadata: {"svp.delegation/v1":{"tokens":["<base64 token>", "…"]}} · ` +
 				`text: {"skill":"svpchain-execution","tool":"execute_evm_native_transfer","args":{"transfer":{"recipient":"0x…","value":"1000000000000000000"}}}`,
 			`message.metadata: {"svp.delegation/v1":{"tokens":["<base64 token>", "…"]}} · ` +

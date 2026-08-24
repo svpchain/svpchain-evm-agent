@@ -18,6 +18,7 @@ var executionPerpsTools = []string{
 // they do not own.
 var executionEVMTools = []string{
 	"execute_evm_call",
+	"execute_evm_contract_method",
 	"execute_evm_native_transfer",
 }
 
@@ -97,6 +98,7 @@ func (r *Registry) RegisterExecutionEVM(s *delegated.Service) {
 		return
 	}
 	r.add(SkillExecution, "execute_evm_call", adaptStrictNative(s.ExecuteEVMCall))
+	r.add(SkillExecution, "execute_evm_contract_method", adaptStrictNative(s.ExecuteEVMContractMethod))
 	r.add(SkillExecution, "execute_evm_native_transfer", adaptStrictNative(s.ExecuteEVMNativeTransfer))
 }
 

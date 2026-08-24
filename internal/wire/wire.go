@@ -158,6 +158,17 @@ func BuildProfile(ctx context.Context, cfg *config.Config, p Profile) (*App, err
 		}
 		chainDeps.EVM = evmClient
 		evmDeps = tools.EVMDeps{Assembler: builder.NewEVMAssembler(evmClient)}
+		for _, contract := range cfg.EVM.Contracts {
+			evmDeps.Contracts = append(evmDeps.Contracts, tools.ConfiguredEVMContract{
+				ID:          contract.ID,
+				Address:     contract.Address,
+				Kind:        contract.Kind,
+				Symbol:      contract.Symbol,
+				Decimals:    contract.Decimals,
+				Methods:     append([]string(nil), contract.Methods...),
+				Description: contract.Description,
+			})
+		}
 
 		if cfg.EVM.Swap.UniswapRouterAddr != "" {
 			uni, err := builder.NewUniswapV2(
@@ -169,6 +180,14 @@ func BuildProfile(ctx context.Context, cfg *config.Config, p Profile) (*App, err
 				return nil, fmt.Errorf("uniswap binding: %w", err)
 			}
 			evmDeps.Uniswap = uni
+		}
+		if cfg.EVM.Swap.FactoryAddr != "" {
+			factory, err := builder.NewUniswapV2Factory(common.HexToAddress(cfg.EVM.Swap.FactoryAddr))
+			if err != nil {
+				grpcConn.Close()
+				return nil, fmt.Errorf("uniswap factory binding: %w", err)
+			}
+			evmDeps.UniswapFactory = factory
 		}
 		if cfg.EVM.Oracle.FeedAddr != "" {
 			oracle, err := builder.NewOracleFeed(common.HexToAddress(cfg.EVM.Oracle.FeedAddr))
@@ -364,6 +383,15 @@ func BuildProfile(ctx context.Context, cfg *config.Config, p Profile) (*App, err
 			Endpoint:     cfg.PublicURL,
 			Capabilities: cfg.Operator.Capabilities,
 			Metadata:     cfg.Operator.Metadata,
+			Contracts: func() []delegated.ConfiguredContract {
+				contracts := make([]delegated.ConfiguredContract, 0, len(cfg.EVM.Contracts))
+				for _, contract := range cfg.EVM.Contracts {
+					contracts = append(contracts, delegated.ConfiguredContract{
+						ID: contract.ID, Address: contract.Address, Methods: append([]string(nil), contract.Methods...),
+					})
+				}
+				return contracts
+			}(),
 		})
 		logger.Info("delegated execution enabled", "operator", operatorAddr)
 	}

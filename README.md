@@ -36,6 +36,66 @@ go run ./cmd/svpchain-evm-agent -config cmd/svpchain-evm-agent/agent.toml
 `/healthz` answers load-balancer liveness checks; the Agent Card is at
 `/.well-known/agent-card.json`.
 
+## EVM contract directory
+
+`list_evm_contracts` exposes a small, deployer-maintained directory of common
+contract addresses. It is deliberately configuration, not a testnet scan: a
+testnet can contain thousands of unrelated contracts, and the agent should
+only advertise addresses that its operator has reviewed.
+
+Add entries to `agent.toml` using lowercase canonical EVM addresses:
+
+```toml
+[[evm.contract]]
+id          = "usdc"
+address     = "0x000000000000000000000000000000000000c07e"
+kind        = "erc20"
+symbol      = "USDC"
+decimals    = 6
+methods     = ["transfer(address,uint256)", "approve(address,uint256)"]
+description = "Test USDC"
+```
+
+For a delegated configured-method call, use `execute_evm_contract_method` with
+the configured address, a method from `methods`, and JSON arguments. The agent
+ABI-encodes the calldata internally before it executes the existing
+`MsgEVMCall` path:
+
+```json
+{
+  "call": {
+    "contract": "0x000000000000000000000000000000000000c07e",
+    "method": "transfer(address,uint256)",
+    "args": ["0x00000000000000000000000000000000000000dd", "1000000"]
+  }
+}
+```
+
+Integer arguments are base-10 strings; byte arguments are `0x`-prefixed hex
+strings. Address, integer, boolean, bytes/fixed-bytes, and fixed or dynamic
+arrays of those types are supported. Tuple signatures are refused until the
+directory supports full ABI JSON. `execute_evm_call` remains available for
+expert callers that already have calldata. Payable methods may additionally
+set `call.value` to the canonical decimal EVM native amount in `asvp`; for
+example, `swapExactSVPForTokens(uint256,address[],address,uint256)` receives
+the input SVP through `value` rather than an ABI argument.
+
+For local development, the repository includes an ignored `contracts.toml`.
+Edit it directly; each start loads it automatically:
+
+```sh
+./scripts/local-evm-agent.sh start \
+  --operator-key-file ./operator.key
+```
+
+Pass `--contracts-file <path>` or set `EVM_AGENT_LOCAL_CONTRACTS_FILE` to use
+a different directory file.
+
+Listing an address is discovery only. `methods` is a whitelist for the typed
+method tool, not a delegation grant. Any delegated EVM call still needs the
+same lowercase address in both the root delegation and the SVP-DT task
+credential's `contracts` limit.
+
 ## Deploying
 
 ```sh

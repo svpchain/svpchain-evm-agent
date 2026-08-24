@@ -14,6 +14,7 @@ package config
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"cosmossdk.io/math"
@@ -92,16 +93,33 @@ func (a AgentChainConfig) Enabled() bool { return a.RestURL != "" }
 // side. Each subtable is an independent optional family: left empty, its
 // operations refuse at call time with a reason and the agent still boots.
 type EVMConfig struct {
-	Swap   SwapConfig   `toml:"swap"`
-	Oracle OracleConfig `toml:"oracle"`
-	Bridge BridgeConfig `toml:"bridge"`
+	Swap      SwapConfig    `toml:"swap"`
+	Oracle    OracleConfig  `toml:"oracle"`
+	Bridge    BridgeConfig  `toml:"bridge"`
+	Contracts []EVMContract `toml:"contract"`
+}
+
+// EVMContract is a small operator-curated contract directory entry. Its
+// Methods whitelist the high-level typed contract-method tool; callers must
+// still add its address to the root delegation and task credential before
+// delegated execution can use it. This deliberately does not enumerate or
+// scan the EVM chain.
+type EVMContract struct {
+	ID          string   `toml:"id"`
+	Address     string   `toml:"address"`
+	Kind        string   `toml:"kind"`
+	Symbol      string   `toml:"symbol"`
+	Decimals    int64    `toml:"decimals"`
+	Methods     []string `toml:"methods"`
+	Description string   `toml:"description"`
 }
 
 // SwapConfig binds the swap operations to a UniswapV2Router02 deployment and
-// its wrapped-native token. Both-or-neither.
+// its wrapped-native token. FactoryAddr optionally enables live Pair discovery.
 type SwapConfig struct {
 	UniswapRouterAddr string `toml:"uniswap_router_addr"`
 	WSVPAddr          string `toml:"wsvp_addr"`
+	FactoryAddr       string `toml:"factory_addr"`
 }
 
 // OracleConfig binds get_oracle_price to an AggregatorV3-style feed.
@@ -254,7 +272,53 @@ func (c *Config) Validate() error {
 	if err := c.validateForeignChains(); err != nil {
 		return err
 	}
+	if err := c.validateContracts(); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (c *Config) validateContracts() error {
+	seen := make(map[string]bool, len(c.EVM.Contracts))
+	for i, contract := range c.EVM.Contracts {
+		id := strings.TrimSpace(contract.ID)
+		if id == "" {
+			return fmt.Errorf("evm.contract[%d].id is required", i)
+		}
+		key := strings.ToLower(id)
+		if seen[key] {
+			return fmt.Errorf("evm.contract[%d].id %q is declared more than once", i, contract.ID)
+		}
+		seen[key] = true
+		if !isCanonicalEVMAddress(contract.Address) {
+			return fmt.Errorf("evm.contract[%d].address %q must be a lowercase 0x address", i, contract.Address)
+		}
+		if contract.Decimals < 0 || contract.Decimals > 77 {
+			return fmt.Errorf("evm.contract[%d].decimals %d must be between 0 and 77", i, contract.Decimals)
+		}
+		methods := make(map[string]bool, len(contract.Methods))
+		for j, method := range contract.Methods {
+			method = strings.TrimSpace(method)
+			if !isConfiguredMethodSignature(method) {
+				return fmt.Errorf("evm.contract[%d].methods[%d] %q must be a whitespace-free ABI signature", i, j, contract.Methods[j])
+			}
+			if methods[method] {
+				return fmt.Errorf("evm.contract[%d].methods[%d] %q is declared more than once", i, j, contract.Methods[j])
+			}
+			methods[method] = true
+		}
+	}
+	return nil
+}
+
+func isConfiguredMethodSignature(method string) bool {
+	open := strings.IndexByte(method, '(')
+	return open > 0 && strings.HasSuffix(method, ")") && !strings.ContainsAny(method, " \t\n") &&
+		!strings.ContainsAny(method[open+1:len(method)-1], "()")
+}
+
+func isCanonicalEVMAddress(address string) bool {
+	return common.IsHexAddress(address) && strings.HasPrefix(address, "0x") && address == strings.ToLower(address)
 }
 
 // RequireEVM enforces what the evm-defi binary cannot serve without: the
@@ -342,10 +406,10 @@ func (c *Config) validateOracle() error {
 	return nil
 }
 
-// validateSwap: router + WSVP both-or-neither, valid 0x addresses, require
-// an EVM RPC endpoint.
+// validateSwap requires router + WSVP together; an optional Factory enables
+// Pair discovery. Every configured swap binding needs an EVM RPC endpoint.
 func (c *Config) validateSwap() error {
-	if c.EVM.Swap.UniswapRouterAddr == "" && c.EVM.Swap.WSVPAddr == "" {
+	if c.EVM.Swap.UniswapRouterAddr == "" && c.EVM.Swap.WSVPAddr == "" && c.EVM.Swap.FactoryAddr == "" {
 		return nil
 	}
 	if c.EVM.Swap.UniswapRouterAddr == "" || c.EVM.Swap.WSVPAddr == "" {
@@ -356,6 +420,9 @@ func (c *Config) validateSwap() error {
 	}
 	if !common.IsHexAddress(c.EVM.Swap.WSVPAddr) {
 		return fmt.Errorf("evm.swap.wsvp_addr %q is not a valid 0x address", c.EVM.Swap.WSVPAddr)
+	}
+	if c.EVM.Swap.FactoryAddr != "" && !common.IsHexAddress(c.EVM.Swap.FactoryAddr) {
+		return fmt.Errorf("evm.swap.factory_addr %q is not a valid 0x address", c.EVM.Swap.FactoryAddr)
 	}
 	if c.DEXChain.EVMRPCURL == "" {
 		return fmt.Errorf("dex_chain.evm_rpc_url is required when evm.swap addresses are set")
