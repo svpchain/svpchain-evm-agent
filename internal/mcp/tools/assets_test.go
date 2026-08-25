@@ -21,12 +21,8 @@ func TestTransferOutAssets_DecimalsKnown(t *testing.T) {
 	require.True(t, ok)
 	require.EqualValues(t, 6, a.decimals)
 	require.Equal(t, assettypes.UusdcDenom, a.bankDenom)
-	require.NotEqual(t, "", a.erc20.Hex())
-
-	a, ok = assetForSymbol("usdv")
-	require.True(t, ok)
-	require.EqualValues(t, 6, a.decimals)
-	require.Equal(t, "", a.bankDenom, "usdv is a pure ERC-20, no bank denom")
+	_, ok = assetForSymbol("usdv")
+	require.False(t, ok)
 }
 
 func TestSymbolForDenomAndToken(t *testing.T) {
@@ -40,16 +36,6 @@ func TestSymbolForDenomAndToken(t *testing.T) {
 
 	_, ok = symbolForDenom("ibc/ABCDEF")
 	require.False(t, ok, "unknown denom is uncapped")
-
-	usdc, _ := assetForSymbol("usdc")
-	sym, ok = symbolForToken(usdc.erc20)
-	require.True(t, ok)
-	require.Equal(t, "usdc", sym)
-
-	usdv, _ := assetForSymbol("usdv")
-	sym, ok = symbolForToken(usdv.erc20)
-	require.True(t, ok)
-	require.Equal(t, "usdv", sym)
 
 	sym, ok = symbolForNative()
 	require.True(t, ok)

@@ -7,8 +7,7 @@
 // all-or-nothing rules, and the same graceful degradation — an unset optional
 // family means those operations refuse at call time with a reason, and the
 // agent still boots. On top of that the agent adds its A2A identity
-// (public_url) and an optional [operator] section holding the delegated
-// signer's key reference; without it the execution skill refuses.
+// (public_url). It never loads a caller or operator signing key.
 package config
 
 import (
@@ -24,9 +23,8 @@ import (
 
 // Config is the agent's configuration.
 type Config struct {
-	DEXChain   DEXChainConfig   `toml:"dex_chain"`
-	AgentChain AgentChainConfig `toml:"agent_chain"`
-	ListenAddr string           `toml:"listen_addr"`
+	DEXChain   DEXChainConfig `toml:"dex_chain"`
+	ListenAddr string         `toml:"listen_addr"`
 
 	// PublicURL is how callers reach this agent, advertised in the Agent Card.
 	// Defaults to "http://localhost"+ListenAddr when empty.
@@ -51,10 +49,9 @@ type Config struct {
 	// the signed tx a caller lands via broadcast_signed_tx.
 	BroadcastMode string `toml:"broadcast_mode"`
 
-	Cache    CacheConfig  `toml:"cache"`
-	Limits   LimitsConfig `toml:"limits"`
-	Fee      FeeConfig    `toml:"fee"`
-	Operator Operator     `toml:"operator"`
+	Cache  CacheConfig  `toml:"cache"`
+	Limits LimitsConfig `toml:"limits"`
+	Fee    FeeConfig    `toml:"fee"`
 }
 
 // DEXChainConfig points the agent at the DEX chain (an EVM-compatible
@@ -73,45 +70,23 @@ type DEXChainConfig struct {
 	EVMRPCURL string `toml:"evm_rpc_url"`
 }
 
-// AgentChainConfig points the agent-identity families — x/agent registry,
-// x/agentwallet delegation, and delegated execution — at the chain carrying
-// those modules when it is not the DEX chain itself. The agent chain is
-// reached over its Cosmos REST API (the gRPC-gateway, typically :1317), not
-// gRPC. Optional: unset, those families run against the DEX chain connection
-// (the single-chain default). Note delegated orders execute on whichever
-// chain verifies the delegation, so a split deployment trades against the
-// agent chain's CLOB.
-type AgentChainConfig struct {
-	ID      string `toml:"id"`
-	RestURL string `toml:"rest_url"`
-}
-
-// Enabled reports whether a separate agent chain is configured.
-func (a AgentChainConfig) Enabled() bool { return a.RestURL != "" }
-
 // EVMConfig holds the per-protocol contract bindings on the DEX chain's EVM
 // side. Each subtable is an independent optional family: left empty, its
 // operations refuse at call time with a reason and the agent still boots.
 type EVMConfig struct {
-	Swap      SwapConfig    `toml:"swap"`
-	Oracle    OracleConfig  `toml:"oracle"`
-	Bridge    BridgeConfig  `toml:"bridge"`
-	Contracts []EVMContract `toml:"contract"`
+	Swap   SwapConfig   `toml:"swap"`
+	Oracle OracleConfig `toml:"oracle"`
+	Bridge BridgeConfig `toml:"bridge"`
+	Assets []EVMAsset   `toml:"asset"`
 }
 
-// EVMContract is a small operator-curated contract directory entry. Its
-// Methods whitelist the high-level typed contract-method tool; callers must
-// still add its address to the root delegation and task credential before
-// delegated execution can use it. This deliberately does not enumerate or
-// scan the EVM chain.
-type EVMContract struct {
-	ID          string   `toml:"id"`
-	Address     string   `toml:"address"`
-	Kind        string   `toml:"kind"`
-	Symbol      string   `toml:"symbol"`
-	Decimals    int64    `toml:"decimals"`
-	Methods     []string `toml:"methods"`
-	Description string   `toml:"description"`
+// EVMAsset is a stable, operator-configured ERC-20 alias such as "usdc".
+// It is discovery metadata only: it neither whitelists methods nor restricts
+// callers from supplying another ERC-20 address directly.
+type EVMAsset struct {
+	ID       string `toml:"id"`
+	Address  string `toml:"address"`
+	Decimals int64  `toml:"decimals"`
 }
 
 // SwapConfig binds the swap operations to a UniswapV2Router02 deployment and
@@ -137,24 +112,6 @@ type BridgeConfig struct {
 	RoutesPath    string            `toml:"routes_path"`
 	SourceChainID uint64            `toml:"source_chain_id"`
 	ForeignChains []EVMForeignChain `toml:"foreign_chain"`
-}
-
-// Operator configures the agent's own on-chain identity: the eth_secp256k1
-// key it signs delegated executions (and its own registration) with, and the
-// registration metadata it advertises. Optional — without a key the
-// svpchain-execution skill refuses with a reason, exactly like the other
-// unconfigured families.
-type Operator struct {
-	// KeyFile is a file holding the operator private key as hex. The
-	// SVPCHAIN_EVM_AGENT_OPERATOR_KEY env var takes precedence when set, so
-	// deployments can inject the key without touching disk.
-	KeyFile string `toml:"key_file"`
-
-	// Capabilities are the capability strings registered on chain.
-	Capabilities []string `toml:"capabilities"`
-
-	// Metadata is the free-form metadata registered on chain.
-	Metadata string `toml:"metadata"`
 }
 
 // EVMForeignChain is one inbound source chain: its EVM chain id, its own
@@ -216,9 +173,6 @@ func Load(path string) (*Config, error) {
 	if c.TransferOutCapPath != "" && !filepath.IsAbs(c.TransferOutCapPath) {
 		c.TransferOutCapPath = filepath.Join(filepath.Dir(path), c.TransferOutCapPath)
 	}
-	if c.Operator.KeyFile != "" && !filepath.IsAbs(c.Operator.KeyFile) {
-		c.Operator.KeyFile = filepath.Join(filepath.Dir(path), c.Operator.KeyFile)
-	}
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
@@ -254,9 +208,6 @@ func (c *Config) Validate() error {
 	if c.ListenAddr == "" {
 		return fmt.Errorf("listen_addr is required")
 	}
-	if (c.AgentChain.ID == "") != (c.AgentChain.RestURL == "") {
-		return fmt.Errorf("agent_chain.id and agent_chain.rest_url must be set together")
-	}
 	if err := c.Fee.validate(); err != nil {
 		return err
 	}
@@ -272,53 +223,37 @@ func (c *Config) Validate() error {
 	if err := c.validateForeignChains(); err != nil {
 		return err
 	}
-	if err := c.validateContracts(); err != nil {
+	if err := c.validateAssets(); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (c *Config) validateContracts() error {
-	seen := make(map[string]bool, len(c.EVM.Contracts))
-	for i, contract := range c.EVM.Contracts {
-		id := strings.TrimSpace(contract.ID)
+func (c *Config) validateAssets() error {
+	seenIDs := make(map[string]bool, len(c.EVM.Assets))
+	seenAddresses := make(map[string]bool, len(c.EVM.Assets))
+	for i, asset := range c.EVM.Assets {
+		id := strings.ToLower(strings.TrimSpace(asset.ID))
 		if id == "" {
-			return fmt.Errorf("evm.contract[%d].id is required", i)
+			return fmt.Errorf("evm.asset[%d].id is required", i)
 		}
-		key := strings.ToLower(id)
-		if seen[key] {
-			return fmt.Errorf("evm.contract[%d].id %q is declared more than once", i, contract.ID)
+		if seenIDs[id] {
+			return fmt.Errorf("evm.asset[%d].id %q is declared more than once", i, asset.ID)
 		}
-		seen[key] = true
-		if !isCanonicalEVMAddress(contract.Address) {
-			return fmt.Errorf("evm.contract[%d].address %q must be a lowercase 0x address", i, contract.Address)
+		seenIDs[id] = true
+		if !common.IsHexAddress(asset.Address) {
+			return fmt.Errorf("evm.asset[%d].address %q is not a valid 0x address", i, asset.Address)
 		}
-		if contract.Decimals < 0 || contract.Decimals > 77 {
-			return fmt.Errorf("evm.contract[%d].decimals %d must be between 0 and 77", i, contract.Decimals)
+		address := strings.ToLower(asset.Address)
+		if seenAddresses[address] {
+			return fmt.Errorf("evm.asset[%d].address %q is declared more than once", i, asset.Address)
 		}
-		methods := make(map[string]bool, len(contract.Methods))
-		for j, method := range contract.Methods {
-			method = strings.TrimSpace(method)
-			if !isConfiguredMethodSignature(method) {
-				return fmt.Errorf("evm.contract[%d].methods[%d] %q must be a whitespace-free ABI signature", i, j, contract.Methods[j])
-			}
-			if methods[method] {
-				return fmt.Errorf("evm.contract[%d].methods[%d] %q is declared more than once", i, j, contract.Methods[j])
-			}
-			methods[method] = true
+		seenAddresses[address] = true
+		if asset.Decimals < 0 || asset.Decimals > 77 {
+			return fmt.Errorf("evm.asset[%d].decimals %d must be between 0 and 77", i, asset.Decimals)
 		}
 	}
 	return nil
-}
-
-func isConfiguredMethodSignature(method string) bool {
-	open := strings.IndexByte(method, '(')
-	return open > 0 && strings.HasSuffix(method, ")") && !strings.ContainsAny(method, " \t\n") &&
-		!strings.ContainsAny(method[open+1:len(method)-1], "()")
-}
-
-func isCanonicalEVMAddress(address string) bool {
-	return common.IsHexAddress(address) && strings.HasPrefix(address, "0x") && address == strings.ToLower(address)
 }
 
 // RequireEVM enforces what the evm-defi binary cannot serve without: the

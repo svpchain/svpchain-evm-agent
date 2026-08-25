@@ -35,9 +35,9 @@
 // Note what did NOT go: the perps tool families (market data, account, trading,
 // funds, Cosmos broadcast). This binary does not register them — see
 // internal/wire's TestEVMProfileServesExactlyItsFamilies — but internal/
-// toolbridge deliberately keeps their Register* functions, because the shared
-// dispatch and delegated-read tests exercise the credential machinery against
-// them. Pruning the handlers would take those tests with it.
+// toolbridge deliberately keeps their Register* functions so sibling profiles
+// can compose the same handlers. Pruning the handlers would take those tests
+// with it.
 //
 // # Files that are not verbatim
 //

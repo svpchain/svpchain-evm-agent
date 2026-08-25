@@ -51,6 +51,16 @@ func parseEVMAddress(s, field string) (common.Address, error) {
 	return common.HexToAddress(t), nil
 }
 
+// resolveERC20Address accepts either a configured [[evm.asset]] id or a raw
+// ERC-20 address. Only ERC-20 token arguments use aliases; recipients,
+// spenders, and arbitrary contracts must remain explicit addresses.
+func resolveERC20Address(s string, assets map[string]ConfiguredEVMAsset, field string) (common.Address, error) {
+	if asset, ok := assets[strings.ToLower(strings.TrimSpace(s))]; ok {
+		return common.HexToAddress(asset.Address), nil
+	}
+	return parseEVMAddress(s, field)
+}
+
 // parseTokenID parses a bare decimal uint256 token id (no decimals scaling).
 func parseTokenID(s string) (*big.Int, error) {
 	t := strings.TrimSpace(s)
@@ -136,7 +146,7 @@ func (h *Handlers) assembleERC(
 // -- build_erc20_transfer ----------------------------------------------
 
 type BuildERC20TransferInput struct {
-	Token    string `json:"token" jsonschema:"the ERC-20 token contract address (0x)"`
+	Token    string `json:"token" jsonschema:"the ERC-20 token contract address (0x), or a configured asset id such as \"usdc\""`
 	To       string `json:"to" jsonschema:"recipient 0x address"`
 	Amount   string `json:"amount" jsonschema:"amount in human units, e.g. \"1.5\" (converted via the token's on-chain decimals)"`
 	ClientID string `json:"client_id" jsonschema:"broadcast-idempotency uuid (echo into broadcast_evm_tx.client_id)"`
@@ -159,7 +169,7 @@ func (h *Handlers) BuildERC20Transfer(
 	if err := h.requireEVM(); err != nil {
 		return nil, BuildERC20Output{}, err
 	}
-	token, err := parseEVMAddress(in.Token, "token")
+	token, err := resolveERC20Address(in.Token, h.Deps.EVM.Assets, "token")
 	if err != nil {
 		return nil, BuildERC20Output{}, err
 	}
@@ -190,7 +200,7 @@ func (h *Handlers) BuildERC20Transfer(
 // -- build_erc20_approve -----------------------------------------------
 
 type BuildERC20ApproveInput struct {
-	Token     string `json:"token" jsonschema:"the ERC-20 token contract address (0x)"`
+	Token     string `json:"token" jsonschema:"the ERC-20 token contract address (0x), or a configured asset id such as \"usdc\""`
 	Spender   string `json:"spender" jsonschema:"spender 0x address authorized to pull tokens"`
 	Amount    string `json:"amount,omitempty" jsonschema:"allowance in human units, e.g. \"100\"; omit when unlimited=true"`
 	Unlimited bool   `json:"unlimited,omitempty" jsonschema:"approve the maximum (2^256-1); ignores amount"`
@@ -218,7 +228,7 @@ func (h *Handlers) BuildERC20Approve(
 	if err != nil {
 		return nil, BuildERC20Output{}, err
 	}
-	token, err := parseEVMAddress(in.Token, "token")
+	token, err := resolveERC20Address(in.Token, h.Deps.EVM.Assets, "token")
 	if err != nil {
 		return nil, BuildERC20Output{}, err
 	}
@@ -255,7 +265,7 @@ func (h *Handlers) BuildERC20Approve(
 // -- build_erc20_transfer_from -----------------------------------------
 
 type BuildERC20TransferFromInput struct {
-	Token    string `json:"token" jsonschema:"the ERC-20 token contract address (0x)"`
+	Token    string `json:"token" jsonschema:"the ERC-20 token contract address (0x), or a configured asset id such as \"usdc\""`
 	From     string `json:"from" jsonschema:"owner 0x address tokens are pulled from (must have approved the signer)"`
 	To       string `json:"to" jsonschema:"recipient 0x address"`
 	Amount   string `json:"amount" jsonschema:"amount in human units, e.g. \"1.5\" (converted via the token's on-chain decimals)"`
@@ -275,7 +285,7 @@ func (h *Handlers) BuildERC20TransferFrom(
 	if err := h.requireEVM(); err != nil {
 		return nil, BuildERC20Output{}, err
 	}
-	token, err := parseEVMAddress(in.Token, "token")
+	token, err := resolveERC20Address(in.Token, h.Deps.EVM.Assets, "token")
 	if err != nil {
 		return nil, BuildERC20Output{}, err
 	}

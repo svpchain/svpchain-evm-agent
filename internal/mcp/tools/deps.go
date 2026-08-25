@@ -38,9 +38,10 @@ type ChainDeps struct {
 type EVMDeps struct {
 	Assembler *builder.EVMAssembler
 
-	// Contracts is an operator-curated, bounded directory exposed by
-	// list_evm_contracts. It is not a transaction or delegation allowlist.
-	Contracts []ConfiguredEVMContract
+	// Assets maps lower-case operator-configured ERC-20 aliases (for example,
+	// "usdc") to their stable address metadata. This is a convenience resolver,
+	// not a contract or method allowlist.
+	Assets map[string]ConfiguredEVMAsset
 
 	// Uniswap binds the swap tools (quote_swap / build_token_approval /
 	// build_swap) to a UniswapV2Router02 + WSVP deployment. Nil unless both
@@ -83,17 +84,10 @@ type EVMDeps struct {
 	HomeChainID uint64
 }
 
-// ConfiguredEVMContract is a discoverable contract alias supplied by the
-// deployment configuration. Address is canonical lowercase 0x form so it can
-// be copied directly into an EVM delegation's contracts limit.
-type ConfiguredEVMContract struct {
-	ID          string
-	Address     string
-	Kind        string
-	Symbol      string
-	Decimals    int64
-	Methods     []string
-	Description string
+// ConfiguredEVMAsset is the runtime form of one [[evm.asset]] entry.
+type ConfiguredEVMAsset struct {
+	Address  string
+	Decimals int64
 }
 
 // ForeignChain is the per-foreign-chain bundle for inbound bridging: the EVM

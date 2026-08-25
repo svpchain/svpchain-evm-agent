@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 
 	"cosmossdk.io/math"
@@ -206,59 +205,7 @@ func (h *Handlers) GetBalance(
 	if err != nil {
 		return nil, GetBalanceOutput{}, err
 	}
-	balances := balancesFromCoins(coins)
-	// Pure ERC-20s (USDV, …) aren't in x/bank — read them from their contracts
-	// and merge. Best-effort: a missing/unreachable EVM never fails the bank
-	// balance read.
-	balances = append(balances, h.erc20Balances(ctx, tp.Owner)...)
-	return nil, GetBalanceOutput{Owner: tp.Owner, Balances: balances}, nil
-}
-
-// erc20Balances reads the owner's balance of each known pure-ERC-20 token (see
-// knownSwapTokens) straight from its contract, since they have no x/bank denom.
-// bankLinked tokens (e.g. USDC -> erc20/usdc) are skipped: their balance already
-// comes back via the bank read, so contract-reading them would double-count.
-// Best-effort by design: returns nil (no error) when EVM/swaps are disabled,
-// and silently skips any token whose balanceOf/decimals read fails or whose
-// balance is zero — get_balance must still return bank balances regardless.
-// Tokens are iterated in symbol order for deterministic output.
-func (h *Handlers) erc20Balances(ctx context.Context, owner string) []BalanceDTO {
-	if h.Deps.Chain.EVM == nil || h.Deps.EVM.Uniswap == nil {
-		return nil
-	}
-	ownerEth, err := ownerEthAddress(owner)
-	if err != nil {
-		return nil
-	}
-	symbols := make([]string, 0, len(knownSwapTokens))
-	for sym := range knownSwapTokens {
-		symbols = append(symbols, sym)
-	}
-	sort.Strings(symbols)
-
-	var out []BalanceDTO
-	for _, sym := range symbols {
-		kt := knownSwapTokens[sym]
-		if kt.bankLinked {
-			continue // already returned by the x/bank read; don't double-count
-		}
-		bal, err := h.erc20Balance(ctx, kt.address, ownerEth)
-		if err != nil || bal.Sign() <= 0 {
-			continue
-		}
-		dec, err := h.tokenDecimals(ctx, false, kt.address)
-		if err != nil {
-			continue
-		}
-		out = append(out, BalanceDTO{
-			Denom:   kt.address.Hex(),
-			Amount:  bal.String(),
-			Symbol:  strings.ToUpper(sym),
-			Display: humanAmount(math.NewIntFromBigInt(bal), dec),
-			Source:  "erc20",
-		})
-	}
-	return out
+	return nil, GetBalanceOutput{Owner: tp.Owner, Balances: balancesFromCoins(coins)}, nil
 }
 
 // balancesFromCoins projects raw bank coins into JSON-friendly BalanceDTOs,

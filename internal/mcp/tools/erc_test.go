@@ -66,6 +66,19 @@ func TestParseEVMAddress(t *testing.T) {
 	}
 }
 
+func TestResolveERC20Address_ConfiguredAsset(t *testing.T) {
+	assets := map[string]ConfiguredEVMAsset{
+		"usdc": {Address: "0x2222222222222222222222222222222222222222", Decimals: 6},
+	}
+	addr, err := resolveERC20Address("USDC", assets, "token")
+	require.NoError(t, err)
+	require.Equal(t, common.HexToAddress(assets["usdc"].Address), addr)
+
+	addr, err = resolveERC20Address("0x3333333333333333333333333333333333333333", assets, "token")
+	require.NoError(t, err)
+	require.Equal(t, common.HexToAddress("0x3333333333333333333333333333333333333333"), addr)
+}
+
 func TestParseTokenID(t *testing.T) {
 	id, err := parseTokenID("42")
 	require.NoError(t, err)

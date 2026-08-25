@@ -1,10 +1,8 @@
 package toolbridge
 
 import (
-	"strings"
 	"testing"
 
-	"github.com/svpchain/svpchain-evm-agent/internal/agentchain"
 	"github.com/svpchain/svpchain-evm-agent/internal/mcp/tools"
 )
 
@@ -36,74 +34,12 @@ var expectedOps = map[string][]string{
 	SkillAuth:      {"auth_challenge", "auth_verify"},
 	SkillFaucet:    {"list_faucet_tokens", "faucet_claim"},
 	SkillEVM: {
-		"broadcast_evm_tx", "evm_tx_status", "list_evm_contracts", "list_swap_pairs", "quote_swap", "build_token_approval",
+		"broadcast_evm_tx", "evm_tx_status", "list_evm_assets", "list_swap_pairs", "quote_swap", "build_token_approval",
 		"build_swap", "build_bridge_deposit", "build_bridge_deposit_inbound",
 		"build_erc20_transfer", "build_erc20_approve", "build_erc20_transfer_from",
 		"build_erc721_transfer_from", "build_erc721_safe_transfer_from",
 		"build_erc721_approve", "build_erc721_set_approval_for_all",
 	},
-}
-
-// expectedChainOps pins the x/agent + x/agentwallet operation table.
-var expectedChainOps = map[string][]string{
-	SkillAgentRegistry: {
-		"get_agent", "get_agent_by_operator", "list_agents", "get_agents_by_owner",
-		"get_agents_by_capability", "get_agent_params",
-		"broadcast_agent_chain_tx",
-		"build_register_agent", "build_update_agent", "build_deposit_bond",
-		"build_withdraw_bond", "build_deregister_agent",
-	},
-	SkillDelegation: {
-		"get_delegation", "get_delegations_by_delegator", "get_delegation_epoch",
-		"get_delegation_spend", "get_agentwallet_params",
-		"build_create_delegation", "build_update_delegation", "build_pause_delegation",
-		"build_resume_delegation", "build_revoke_delegation", "build_revoke_token",
-	},
-}
-
-func TestChainRegistrationCoversEveryExpectedOp(t *testing.T) {
-	r := New(&tools.Handlers{})
-	r.RegisterAgentChain(agentchain.New(nil, nil, nil, nil, nil, nil, nil))
-
-	for skill, toolNames := range expectedChainOps {
-		for _, tool := range toolNames {
-			op, ok := r.Lookup(tool)
-			if !ok {
-				t.Errorf("tool %q missing from registry", tool)
-				continue
-			}
-			if op.Skill != skill {
-				t.Errorf("tool %q registered under skill %q, expected %q", tool, op.Skill, skill)
-			}
-		}
-	}
-	for skill, want := range expectedChainOps {
-		got := r.BySkill()[skill]
-		if len(got) != len(want) {
-			t.Errorf("skill %q has %d tools registered, expected %d: %v", skill, len(got), len(want), got)
-		}
-	}
-}
-
-// Keyless deployments still advertise the execution surface — every op
-// registered, every op refusing with the operator-key requirement.
-func TestExecutionRegistrationWithoutAKeyRefusesInformatively(t *testing.T) {
-	r := New(&tools.Handlers{})
-	r.RegisterExecution(nil)
-
-	for _, tool := range executionCoreTools {
-		op, ok := r.Lookup(tool)
-		if !ok {
-			t.Errorf("tool %q missing from registry", tool)
-			continue
-		}
-		if op.Skill != SkillExecution {
-			t.Errorf("tool %q under skill %q", tool, op.Skill)
-		}
-		if _, err := op.Call(nil, nil); err == nil || !strings.Contains(err.Error(), "operator key") {
-			t.Errorf("keyless %q must refuse naming the operator-key requirement, got %v", tool, err)
-		}
-	}
 }
 
 func TestRegistryCoversEveryExpectedTool(t *testing.T) {
@@ -133,8 +69,6 @@ func TestRegistryCoversEveryExpectedTool(t *testing.T) {
 	for skill, got := range r.BySkill() {
 		want, ok := expectedOps[skill]
 		if !ok {
-			// Skills registered by other milestones (agent-registry,
-			// delegation, execution) have their own completeness tables.
 			continue
 		}
 		if len(got) != len(want) {

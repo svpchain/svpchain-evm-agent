@@ -2,9 +2,6 @@ package wire
 
 import (
 	"github.com/svpchain/svpchain-evm-agent/internal/mcp/tools"
-
-	"github.com/svpchain/svpchain-evm-agent/internal/agentchain"
-	"github.com/svpchain/svpchain-evm-agent/internal/delegated"
 	"github.com/svpchain/svpchain-evm-agent/internal/toolbridge"
 )
 
@@ -23,33 +20,24 @@ import (
 type Profile struct {
 	Name string
 
-	// Register composes the binary's operation registry. exec is nil on
-	// keyless deployments; the execution registrations then advertise
-	// informative refusals.
-	Register func(r *toolbridge.Registry, h *tools.Handlers, agent *agentchain.Service, exec *delegated.Service)
+	// Register composes the binary's operation registry.
+	Register func(r *toolbridge.Registry, h *tools.Handlers)
 }
 
-// RegisterDelegationStack adds the families every delegation-capable binary
-// serves: self-service auth, the agent-chain identity modules, and the
-// domain-agnostic execution core (identity, self-registration, settlement).
-//
-// Kept separate from the EVM family it sits beside in EVMProfile because the
-// split is real: this is the domain-agnostic half, shared with every other
-// SVP-Chain agent, and it is what a keyless deployment still advertises.
-func RegisterDelegationStack(r *toolbridge.Registry, h *tools.Handlers, agent *agentchain.Service, exec *delegated.Service) {
+// RegisterCallerSignedStack adds the support tools required by a non-custodial
+// remote service. The caller authenticates with a wallet signature, then signs
+// every returned EVM payload locally before asking this service to broadcast it.
+func RegisterCallerSignedStack(r *toolbridge.Registry, h *tools.Handlers) {
 	r.RegisterAuth(h)
 	r.RegisterFaucet(h)
-	r.RegisterAgentChain(agent)
-	r.RegisterExecutionCore(exec)
 }
 
-// EVMProfile serves EVM DeFi: swaps, bridge deposits, ERC-20/721, the raw EVM
-// broadcast rail, and the chain's whitelisted delegated EVM contract calls.
+// EVMProfile serves caller-signed EVM DeFi: discovery, builds, and the raw
+// EVM broadcast rail. It never holds or uses a caller's private key.
 var EVMProfile = Profile{
 	Name: "evm",
-	Register: func(r *toolbridge.Registry, h *tools.Handlers, agent *agentchain.Service, exec *delegated.Service) {
+	Register: func(r *toolbridge.Registry, h *tools.Handlers) {
 		r.RegisterEVM(h)
-		RegisterDelegationStack(r, h, agent, exec)
-		r.RegisterExecutionEVM(exec)
+		RegisterCallerSignedStack(r, h)
 	},
 }

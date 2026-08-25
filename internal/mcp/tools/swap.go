@@ -51,60 +51,24 @@ var maxUint256 = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewI
 
 // -- token / plan helpers (pure, unit-tested) --------------------------
 
-// knownToken is one registered ERC-20 for this deployment: its address plus
-// whether that balance is also represented by an x/bank denom.
-//
-// bankLinked tokens (e.g. USDC, the EVM side of the erc20/usdc trading
-// collateral) already surface through get_balance's bank read, so they are NOT
-// additionally contract-read there — that would double-count the same balance.
-// Pure ERC-20s (USDV) have no bank denom and ARE contract-read. The distinction
-// only affects get_balance; swap aliases and faucet labels use every entry.
-type knownToken struct {
-	address    common.Address
-	bankLinked bool
-}
-
-// knownSwapTokens maps lower-case symbol aliases to this deployment's ERC-20s,
-// so an agent can pass token_in/token_out="usdv" / "usdc" instead of the raw 0x
-// address (native SVP is named separately, in parseSwapToken). These are
-// convenience aliases only — a caller can always pass any 0x address, or
-// discover faucet-dispensed tokens via list_faucet_tokens. Hardcoded like
-// knownDenoms in account.go; decimals are still read on chain at call time. Also
-// the source for labeling known ERC-20s by symbol in faucet output (faucet.go)
-// and for the contract-read balances in get_balance (account.go).
-var knownSwapTokens = map[string]knownToken{
-	"usdv": {address: common.HexToAddress("0x013a61E622e6ABFCaB64F52D274C3Fc0aA37f951")},
-	"usdc": {address: common.HexToAddress("0x732F6Ea7AfD5EdC02e7ba052075dd0780e285489"), bankLinked: true},
-}
-
-// knownTokenSymbol reverse-maps an ERC-20 address to its upper-cased symbol
-// alias, if one is registered in knownSwapTokens.
-func knownTokenSymbol(addr common.Address) (string, bool) {
-	for sym, kt := range knownSwapTokens {
-		if kt.address == addr {
-			return strings.ToUpper(sym), true
-		}
-	}
-	return "", false
-}
-
 // parseSwapToken resolves a tool's token argument to either native SVP or an
 // ERC-20 address. Empty, "native", "svp", or the zero address all mean native;
-// a known symbol (see knownSwapTokens) resolves to its address; anything else
-// must be a valid 0x address.
-func parseSwapToken(s string) (addr common.Address, native bool, err error) {
+// every other token must be its valid 0x address or a configured asset alias.
+// Use list_swap_pairs to discover current token addresses from the configured
+// Factory.
+func parseSwapToken(s string, assets map[string]ConfiguredEVMAsset) (addr common.Address, native bool, err error) {
 	t := strings.TrimSpace(s)
 	key := strings.ToLower(t)
 	switch key {
 	case "", "native", "svp":
 		return common.Address{}, true, nil
 	}
-	if kt, ok := knownSwapTokens[key]; ok {
-		return kt.address, false, nil
+	if asset, ok := assets[key]; ok {
+		return common.HexToAddress(asset.Address), false, nil
 	}
 	if !common.IsHexAddress(t) {
 		return common.Address{}, false, fmt.Errorf(
-			"invalid token %q: use a 0x address, a known symbol (usdv), or empty/\"native\"/\"svp\" for native SVP", s)
+			"invalid token %q: use a configured asset id, a 0x address, or empty/\"native\"/\"svp\" for native SVP", s)
 	}
 	addr = common.HexToAddress(t)
 	if addr == (common.Address{}) {
@@ -206,20 +170,6 @@ func (h *Handlers) tokenDecimals(ctx context.Context, native bool, token common.
 	return int64(dec), nil
 }
 
-// erc20Balance reads balanceOf(account) for an ERC-20 token off chain.
-func (h *Handlers) erc20Balance(ctx context.Context, token, account common.Address) (*big.Int, error) {
-	uni := h.Deps.EVM.Uniswap
-	data, err := uni.PackBalanceOf(account)
-	if err != nil {
-		return nil, err
-	}
-	out, err := h.evmCall(ctx, token, data)
-	if err != nil {
-		return nil, fmt.Errorf("read balanceOf for %s: %w", token.Hex(), err)
-	}
-	return uni.UnpackBalanceOf(out)
-}
-
 // quoteAmountsOut reads getAmountsOut(amountIn, path) off chain and returns the
 // full amounts array (amounts[0]==amountIn, amounts[last]==output).
 func (h *Handlers) quoteAmountsOut(ctx context.Context, uni *builder.UniswapV2, amountIn *big.Int, path []common.Address) ([]*big.Int, error) {
@@ -237,8 +187,8 @@ func (h *Handlers) quoteAmountsOut(ctx context.Context, uni *builder.UniswapV2, 
 // -- quote_swap --------------------------------------------------------
 
 type QuoteSwapInput struct {
-	TokenIn  string `json:"token_in" jsonschema:"input token: a 0x ERC-20 address, a known symbol (\"usdv\"), or empty/\"native\"/\"svp\" for native SVP"`
-	TokenOut string `json:"token_out" jsonschema:"output token: a 0x ERC-20 address, a known symbol (\"usdv\"), or empty/\"native\"/\"svp\" for native SVP"`
+	TokenIn  string `json:"token_in" jsonschema:"input token: a configured asset id (such as \"usdc\"), a 0x ERC-20 address, or empty/\"native\"/\"svp\" for native SVP"`
+	TokenOut string `json:"token_out" jsonschema:"output token: a configured asset id (such as \"usdc\"), a 0x ERC-20 address, or empty/\"native\"/\"svp\" for native SVP"`
 	AmountIn string `json:"amount_in" jsonschema:"input amount in human units, e.g. \"1.5\""`
 }
 
@@ -268,11 +218,11 @@ func (h *Handlers) QuoteSwap(
 		return nil, QuoteSwapOutput{}, err
 	}
 
-	inAddr, inNative, err := parseSwapToken(in.TokenIn)
+	inAddr, inNative, err := parseSwapToken(in.TokenIn, h.Deps.EVM.Assets)
 	if err != nil {
 		return nil, QuoteSwapOutput{}, fmt.Errorf("token_in: %w", err)
 	}
-	outAddr, outNative, err := parseSwapToken(in.TokenOut)
+	outAddr, outNative, err := parseSwapToken(in.TokenOut, h.Deps.EVM.Assets)
 	if err != nil {
 		return nil, QuoteSwapOutput{}, fmt.Errorf("token_out: %w", err)
 	}
@@ -315,7 +265,7 @@ func (h *Handlers) QuoteSwap(
 // -- build_token_approval ----------------------------------------------
 
 type BuildTokenApprovalInput struct {
-	Token     string `json:"token" jsonschema:"ERC-20 to approve the router to spend (the input token of a swap): a 0x address or a known symbol (\"usdv\")"`
+	Token     string `json:"token" jsonschema:"ERC-20 to approve the router to spend (the input token of a swap): a configured asset id or 0x address"`
 	Amount    string `json:"amount,omitempty" jsonschema:"human amount to approve, e.g. \"100\"; omit when unlimited=true"`
 	Unlimited bool   `json:"unlimited,omitempty" jsonschema:"approve the maximum (2^256-1) so future swaps of this token need no further approval; ignores amount"`
 	ClientID  string `json:"client_id" jsonschema:"broadcast-idempotency uuid (echo into broadcast_evm_tx.client_id)"`
@@ -343,7 +293,7 @@ func (h *Handlers) BuildTokenApproval(
 		return nil, BuildTokenApprovalOutput{}, err
 	}
 
-	addr, native, err := parseSwapToken(in.Token)
+	addr, native, err := parseSwapToken(in.Token, h.Deps.EVM.Assets)
 	if err != nil {
 		return nil, BuildTokenApprovalOutput{}, fmt.Errorf("token: %w", err)
 	}
@@ -395,8 +345,8 @@ func (h *Handlers) BuildTokenApproval(
 // -- build_swap --------------------------------------------------------
 
 type BuildSwapInput struct {
-	TokenIn     string `json:"token_in" jsonschema:"input token: a 0x ERC-20 address, a known symbol (\"usdv\"), or empty/\"native\"/\"svp\" for native SVP"`
-	TokenOut    string `json:"token_out" jsonschema:"output token: a 0x ERC-20 address, a known symbol (\"usdv\"), or empty/\"native\"/\"svp\" for native SVP"`
+	TokenIn     string `json:"token_in" jsonschema:"input token: a configured asset id (such as \"usdc\"), a 0x ERC-20 address, or empty/\"native\"/\"svp\" for native SVP"`
+	TokenOut    string `json:"token_out" jsonschema:"output token: a configured asset id (such as \"usdc\"), a 0x ERC-20 address, or empty/\"native\"/\"svp\" for native SVP"`
 	AmountIn    string `json:"amount_in" jsonschema:"exact input amount in human units, e.g. \"1.5\""`
 	SlippageBps int    `json:"slippage_bps,omitempty" jsonschema:"max slippage in basis points (50 = 0.5%); defaults to 50. The swap reverts if it would fill worse than quote*(1-slippage)"`
 	DeadlineSec int64  `json:"deadline_seconds,omitempty" jsonschema:"seconds from now the swap stays valid once signed; defaults to 1200 (20m)"`
@@ -449,11 +399,11 @@ func (h *Handlers) BuildSwap(
 		return nil, BuildSwapOutput{}, err
 	}
 
-	inAddr, inNative, err := parseSwapToken(in.TokenIn)
+	inAddr, inNative, err := parseSwapToken(in.TokenIn, h.Deps.EVM.Assets)
 	if err != nil {
 		return nil, BuildSwapOutput{}, fmt.Errorf("token_in: %w", err)
 	}
-	outAddr, outNative, err := parseSwapToken(in.TokenOut)
+	outAddr, outNative, err := parseSwapToken(in.TokenOut, h.Deps.EVM.Assets)
 	if err != nil {
 		return nil, BuildSwapOutput{}, fmt.Errorf("token_out: %w", err)
 	}
@@ -595,14 +545,11 @@ func (h *Handlers) checkAllowance(ctx context.Context, uni *builder.UniswapV2, t
 
 // -- small shared helpers ----------------------------------------------
 
-// tokenLabel renders a token for human-facing output: "native" for SVP, its
-// upper-cased symbol for a known alias (e.g. "USDV"), else the 0x address.
+// tokenLabel renders a token for human-facing output: "native" for SVP, else
+// its ERC-20 0x address.
 func tokenLabel(native bool, addr common.Address) string {
 	if native {
 		return "native"
-	}
-	if sym, ok := knownTokenSymbol(addr); ok {
-		return sym
 	}
 	return addr.Hex()
 }

@@ -1,9 +1,7 @@
 // Command svpchain-evm-agent is the EVM DeFi A2A agent for SVP-Chain: swap
 // quoting and building, bridge deposits, ERC-20/721 transfers and approvals,
-// raw EVM broadcast, self-service auth, faucet, the chain's agent/agentwallet
-// modules, and the SVP-DT execution core (identity, self-registration,
-// settlement) when an operator key is configured. Delegated EVM contract
-// calls use MsgAgentExecDelegated; all other EVM builds are caller-signed.
+// raw EVM broadcast, self-service auth, and faucet. It is non-custodial:
+// callers sign every built transaction with their own local signer.
 //
 // Everything it serves is implemented under internal/, which was the shared
 // svpchain-agent-core library until that repo was retired. The perps and

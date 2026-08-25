@@ -95,10 +95,6 @@
 #                                  discovery. SVPCHAIN_EVM_UNISWAP_FACTORY
 #   --evm-oracle <addr>            Price feed for get_oracle_price.
 #                                  SVPCHAIN_EVM_ORACLE
-#   --evm-contracts-file <path>    Optional TOML [[evm.contract]] directory.
-#                                  The file is merged into agent.toml; entries
-#                                  are discovery metadata, not authorization.
-#                                  SVPCHAIN_EVM_CONTRACTS_FILE
 #   --evm-bridge-addr <addr>       SVPBridge on this chain. Needs the routes
 #                                  registry and the source chain id.
 #   --evm-bridge-routes <path>     Registry path in the container. RELATIVE
@@ -242,7 +238,7 @@ readonly CONFIG_VARS=(
   SVPCHAIN_EVM_AGENT_PUBLIC_URL SVPCHAIN_EVM_AGENT_OPERATOR_KEY
   SVPCHAIN_OPERATOR_CAPABILITIES SVPCHAIN_OPERATOR_METADATA SVPCHAIN_INSTALL_DIR
   SVPCHAIN_EVM_RPC SVPCHAIN_EVM_UNISWAP_ROUTER SVPCHAIN_EVM_WSVP
-  SVPCHAIN_EVM_ORACLE SVPCHAIN_EVM_CONTRACTS_FILE SVPCHAIN_EVM_BRIDGE SVPCHAIN_EVM_BRIDGE_ROUTES
+  SVPCHAIN_EVM_ORACLE SVPCHAIN_EVM_BRIDGE SVPCHAIN_EVM_BRIDGE_ROUTES
   SVPCHAIN_EVM_BRIDGE_ROUTES_SRC SVPCHAIN_EVM_BRIDGE_SOURCE_CHAIN_ID
   SVPCHAIN_EVM_FOREIGN_CHAINS SVPCHAIN_FAUCET_URL SVPCHAIN_MARKETS_REFRESH
   SVPCHAIN_DEPOSIT_MAX_USDC SVPCHAIN_WITHDRAW_MAX_USDC
@@ -325,7 +321,6 @@ evm_uniswap_router="${SVPCHAIN_EVM_UNISWAP_ROUTER:-0xFe7bf2DFd5CB268C6779f1F6146
 evm_wsvp="${SVPCHAIN_EVM_WSVP:-0x771a0a63D8198b7dbea4a16910ff68AB38006531}"
 evm_uniswap_factory="${SVPCHAIN_EVM_UNISWAP_FACTORY:-0xd0Dd57B4a87dfdFC427FA3f71251D2427B6A1ac7}"
 evm_oracle="${SVPCHAIN_EVM_ORACLE:-0xAE351F2dF66DF1A7d2eB0D7574BcDb909E680B56}"
-evm_contracts_file="${SVPCHAIN_EVM_CONTRACTS_FILE:-}"
 evm_bridge_addr="${SVPCHAIN_EVM_BRIDGE:-0x78Aca10afd5b28E838ECf0De20c5621CE39D9F4a}"
 evm_bridge_routes="${SVPCHAIN_EVM_BRIDGE_ROUTES:-routes.json}"
 evm_bridge_routes_src="${SVPCHAIN_EVM_BRIDGE_ROUTES_SRC:-}"
@@ -365,7 +360,6 @@ while [[ $# -gt 0 ]]; do
     --evm-wsvp)               evm_wsvp="$2"; mark_flag SVPCHAIN_EVM_WSVP;          shift 2 ;;
     --evm-uniswap-factory)    evm_uniswap_factory="$2"; mark_flag SVPCHAIN_EVM_UNISWAP_FACTORY; shift 2 ;;
     --evm-oracle)             evm_oracle="$2"; mark_flag SVPCHAIN_EVM_ORACLE;        shift 2 ;;
-    --evm-contracts-file)     evm_contracts_file="$2"; mark_flag SVPCHAIN_EVM_CONTRACTS_FILE; shift 2 ;;
     --evm-bridge-addr)        evm_bridge_addr="$2"; mark_flag SVPCHAIN_EVM_BRIDGE;   shift 2 ;;
     --evm-bridge-routes)      evm_bridge_routes="$2"; mark_flag SVPCHAIN_EVM_BRIDGE_ROUTES; shift 2 ;;
     --evm-bridge-routes-src)  evm_bridge_routes_src="$2"; mark_flag SVPCHAIN_EVM_BRIDGE_ROUTES_SRC; shift 2 ;;
@@ -425,7 +419,6 @@ public_url="${public_url%/}"
 # from --evm-bridge-routes-src (empty → generate from render_routes_json).
 bridge_routes_basename=""
 bridge_routes_src_abs=""
-evm_contracts_file_abs=""
 
 # ---- shared helpers -------------------------------------------------------
 
@@ -450,19 +443,6 @@ resolve_bridge_routes() {
     fi
     [[ -f "$bridge_routes_src_abs" ]] || fail "--evm-bridge-routes-src '$bridge_routes_src_abs' was not found"
   fi
-}
-
-# resolve_contracts_file makes the optional contract directory reproducible in
-# the rendered agent.toml. The contents are copied into that config rather than
-# bind-mounted, so a deployed container has one complete immutable config.
-resolve_contracts_file() {
-  [[ -n "$evm_contracts_file" ]] || return 0
-  if [[ "$evm_contracts_file" = /* ]]; then
-    evm_contracts_file_abs="$evm_contracts_file"
-  else
-    evm_contracts_file_abs="$(pwd)/$evm_contracts_file"
-  fi
-  [[ -f "$evm_contracts_file_abs" ]] || fail "--evm-contracts-file '$evm_contracts_file_abs' was not found"
 }
 
 # emit_foreign_chains — emit the [[evm.bridge.foreign_chain]] array-of-tables
@@ -580,14 +560,6 @@ EOF
   elif [[ -n "$evm_bridge_routes" ]]; then
     echo "# WARNING: --evm-bridge-routes set but evm_bridge_addr / evm_bridge_source_chain_id are empty;" >&2
     echo "#          bridge omitted (config requires all three)." >&2
-  fi
-  if [[ -n "$evm_contracts_file_abs" ]]; then
-    cat <<EOF
-
-# Contract directory included from ${evm_contracts_file_abs}.
-# Discovery only: contracts remain subject to delegation credential limits.
-EOF
-    cat "$evm_contracts_file_abs"
   fi
   cat <<EOF
 
@@ -714,16 +686,7 @@ EOF
 }
 
 require_install_args() {
-  [[ -n "$host" ]] || fail "--host is required (or set SVPCHAIN_DEPLOY_HOST)"
-  # A keyless deploy is a deploy of nothing. The binary tolerates it — the
-  # execution skills answer with a reason instead of an unknown-tool error —
-  # but that mode exists for local runs and tests, not for a host: without a
-  # key this agent cannot register on chain, cannot execute a delegated order,
-  # and cannot be paid through settlement, so what lands is a service whose
-  # every interesting call refuses. Refuse here rather than ship it and let the
-  # first caller discover it.
-  [[ -n "$operator_key" ]] || \
-    fail "SVPCHAIN_EVM_AGENT_OPERATOR_KEY is required: without it this agent cannot register on chain, execute delegated orders, or be paid, so a deployed one would refuse every execution call. Run --gen-operator-key to mint one into ${config_dir}, or set it in ${config_dir}/config.sh yourself"
+	[[ -n "$host" ]] || fail "--host is required (or set SVPCHAIN_DEPLOY_HOST)"
 }
 
 # validate_hex_key — the VALUE must look like a 32-byte hex operator key.
@@ -1051,7 +1014,7 @@ if [[ "$mode" == "print-env" ]]; then
     SVPCHAIN_AGENT_CHAIN_REST SVPCHAIN_EVM_AGENT_PUBLIC_URL
     SVPCHAIN_EVM_AGENT_OPERATOR_KEY SVPCHAIN_OPERATOR_CAPABILITIES
     SVPCHAIN_OPERATOR_METADATA SVPCHAIN_EVM_RPC SVPCHAIN_EVM_UNISWAP_ROUTER
-    SVPCHAIN_EVM_WSVP SVPCHAIN_EVM_UNISWAP_FACTORY SVPCHAIN_EVM_ORACLE SVPCHAIN_EVM_CONTRACTS_FILE SVPCHAIN_EVM_BRIDGE
+    SVPCHAIN_EVM_WSVP SVPCHAIN_EVM_UNISWAP_FACTORY SVPCHAIN_EVM_ORACLE SVPCHAIN_EVM_BRIDGE
     SVPCHAIN_EVM_BRIDGE_ROUTES SVPCHAIN_EVM_BRIDGE_ROUTES_SRC
     SVPCHAIN_EVM_BRIDGE_SOURCE_CHAIN_ID SVPCHAIN_EVM_FOREIGN_CHAINS
     SVPCHAIN_FAUCET_URL SVPCHAIN_MARKETS_REFRESH
@@ -1065,7 +1028,7 @@ if [[ "$mode" == "print-env" ]]; then
     "$agent_chain_rest" "$public_url"
     "$operator_key" "$operator_capabilities"
     "$operator_metadata" "$evm_rpc" "$evm_uniswap_router"
-    "$evm_wsvp" "$evm_uniswap_factory" "$evm_oracle" "$evm_contracts_file" "$evm_bridge_addr"
+    "$evm_wsvp" "$evm_uniswap_factory" "$evm_oracle" "$evm_bridge_addr"
     "$evm_bridge_routes" "$evm_bridge_routes_src"
     "$evm_bridge_source_chain_id" "$evm_foreign_chains"
     "$faucet_url" "$markets_refresh"
@@ -1115,7 +1078,6 @@ if [[ "$mode" == "print-config" ]]; then
   # when the environment supplies a key. The key material is never in this
   # file — it ships as a separate compose secret.
   resolve_operator_key
-  resolve_contracts_file
   render_agent_toml
   exit 0
 fi
@@ -1163,6 +1125,10 @@ if [[ "$mode" == "uninstall" ]]; then
   exit 0
 fi
 
+if [[ "$mode" == "gen-operator-key" || "$mode" == "register" ]]; then
+  fail "on-chain agent registration and delegated execution were removed; this service uses caller-signed MCP transactions"
+fi
+
 # ---- mode: install --------------------------------------------------------
 
 require_install_args
@@ -1175,7 +1141,6 @@ require_cmd go
 # the operator's CWD, before any cd) and validate them. The key's presence was
 # already required above; this is what checks it is actually a key.
 resolve_operator_key
-resolve_contracts_file
 resolve_bridge_routes
 if [[ -n "$evm_bridge_addr" && -z "$bridge_routes_basename" ]]; then
   info "bridge: evm_bridge_routes is absolute ($evm_bridge_routes) — not auto-shipping; ensure that path exists on $host."
@@ -1192,10 +1157,10 @@ image_ref="${IMAGE_REPO}:${image_tag}"
 image_tar="${REPO_DIR}/build/${AGENT_NAME}.image.tar"
 mkdir -p "${REPO_DIR}/build"
 
-step "Preflight (operator + remote)"
+step "Preflight (remote)"
 info "host=$host image=$image_ref platform=$platform"
 info "install_dir=$install_dir public_url=$public_url"
-info "  ${AGENT_NAME} :${AGENT_PORT} — operator key set (execution ON)"
+info "  ${AGENT_NAME} :${AGENT_PORT} — caller-signed EVM service"
 if [[ "$dry_run" != "1" ]]; then
   ssh -o BatchMode=yes "$host" "docker version --format '{{.Server.Version}}'" \
     >/dev/null 2>&1 \

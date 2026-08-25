@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -21,17 +22,18 @@ import (
 const nativeTokenAddress = "0x0000000000000000000000000000000000000000"
 
 // faucetTokenSymbol labels a faucet token address with a human symbol: "SVP"
-// for the native sentinel (zero / empty address), the registered alias for a
-// known ERC-20 (e.g. "USDV" for 0x013a…f951; see knownSwapTokens), or "" when
-// the address isn't recognized. Lets list_faucet_tokens / faucet_claim show a
-// symbol instead of just a raw 0x address.
+// for the native sentinel (zero / empty address), or "" for an ERC-20. Token
+// metadata is discovered dynamically rather than kept as an address registry.
 func faucetTokenSymbol(address string) string {
+	if strings.TrimSpace(address) == "" {
+		return "SVP"
+	}
+	if !common.IsHexAddress(address) {
+		return ""
+	}
 	addr := common.HexToAddress(address)
 	if addr == (common.Address{}) {
 		return "SVP"
-	}
-	if sym, ok := knownTokenSymbol(addr); ok {
-		return sym
 	}
 	return ""
 }
@@ -43,7 +45,7 @@ type FaucetTokenDTO struct {
 	Address       string `json:"address"`
 	AmountAllowed string `json:"amount_allowed"`
 	Enabled       bool   `json:"enabled"`
-	Symbol        string `json:"symbol,omitempty"` // "SVP", "USDV", … — omitted if unknown
+	Symbol        string `json:"symbol,omitempty"` // "SVP" for native; omitted for ERC-20
 }
 
 // faucetTokensWithSymbols annotates each backend token with its symbol.
@@ -65,7 +67,7 @@ func faucetTokensWithSymbols(tokens []faucet.TokenInfo) []FaucetTokenDTO {
 type ListFaucetTokensInput struct{}
 
 type ListFaucetTokensOutput struct {
-	Tokens []FaucetTokenDTO `json:"tokens" jsonschema:"tokens the faucet will dispense, each with its symbol (SVP, USDV, …), 0x address, and per-claim amount (base units)"`
+	Tokens []FaucetTokenDTO `json:"tokens" jsonschema:"tokens the faucet will dispense, each with a 0x address and per-claim amount (base units)"`
 }
 
 func (h *Handlers) ListFaucetTokens(
@@ -89,17 +91,17 @@ func (h *Handlers) ListFaucetTokens(
 // -- faucet_claim ------------------------------------------------------
 
 type FaucetClaimInput struct {
-	// Token is the token to claim: a 0x address, a known symbol ("usdv"), or
-	// empty/"native"/"svp" (the default) for the native token (SVP). Use
+	// Token is the token to claim: a 0x address, or empty/"native"/"svp" (the
+	// default) for the native token (SVP). Use
 	// list_faucet_tokens to discover claimable ERC-20 addresses.
-	Token string `json:"token,omitempty" jsonschema:"token to claim: a 0x address, a known symbol (\"usdv\"), or omit/\"native\"/\"svp\" for the native token (SVP). See list_faucet_tokens."`
+	Token string `json:"token,omitempty" jsonschema:"token to claim: a configured asset id, a 0x address, or omit/\"native\"/\"svp\" for the native token (SVP). See list_faucet_tokens."`
 }
 
 type FaucetClaimOutput struct {
 	TxHash  string `json:"tx_hash"`          // on-chain tx the faucet operator submitted
 	Amount  string `json:"amount"`           // amount dispensed, base units
 	Token   string `json:"token"`            // token that was claimed (0x address)
-	Symbol  string `json:"symbol,omitempty"` // "SVP", "USDV", … — omitted if unknown
+	Symbol  string `json:"symbol,omitempty"` // "SVP" for native; omitted for ERC-20
 	Address string `json:"address"`          // recipient (the caller's own EVM address)
 }
 
@@ -125,9 +127,9 @@ func (h *Handlers) FaucetClaim(
 	}
 	address := addr.Hex()
 
-	// Accept a 0x address, a known symbol ("usdv"), or native — same resolution
-	// the swap tools use. The faucet backend wants the zero address for native.
-	tokenAddr, native, err := parseSwapToken(in.Token)
+	// Accept a 0x address or native — the same resolution the swap tools use.
+	// The faucet backend wants the zero address for native.
+	tokenAddr, native, err := parseSwapToken(in.Token, h.Deps.EVM.Assets)
 	if err != nil {
 		return nil, FaucetClaimOutput{}, err
 	}

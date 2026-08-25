@@ -8,17 +8,14 @@ import (
 // every operation with its skill so the card and the dispatch table cannot
 // drift (a test pins the mapping).
 const (
-	SkillMarketData    = "svpchain-market-data"
-	SkillAccount       = "svpchain-account"
-	SkillTrading       = "svpchain-trading"
-	SkillFunds         = "svpchain-funds"
-	SkillBroadcast     = "svpchain-broadcast"
-	SkillAuth          = "svpchain-auth"
-	SkillFaucet        = "svpchain-faucet"
-	SkillEVM           = "svpchain-evm"
-	SkillAgentRegistry = "svpchain-agent-registry"
-	SkillDelegation    = "svpchain-delegation"
-	SkillExecution     = "svpchain-execution"
+	SkillMarketData = "svpchain-market-data"
+	SkillAccount    = "svpchain-account"
+	SkillTrading    = "svpchain-trading"
+	SkillFunds      = "svpchain-funds"
+	SkillBroadcast  = "svpchain-broadcast"
+	SkillAuth       = "svpchain-auth"
+	SkillFaucet     = "svpchain-faucet"
+	SkillEVM        = "svpchain-evm"
 )
 
 // NewEmpty returns a registry with nothing registered. A per-category binary
@@ -104,7 +101,7 @@ func (r *Registry) RegisterEVMBroadcast(h *tools.Handlers) {
 
 // RegisterEVMDeFi adds the EVM DeFi surface: swap, bridge, ERC-20/721.
 func (r *Registry) RegisterEVMDeFi(h *tools.Handlers) {
-	r.add(SkillEVM, "list_evm_contracts", adapt(h.ListEVMContracts))
+	r.add(SkillEVM, "list_evm_assets", adapt(h.ListEVMAssets))
 	r.add(SkillEVM, "list_swap_pairs", adapt(h.ListSwapPairs))
 	r.add(SkillEVM, "quote_swap", adapt(h.QuoteSwap))
 	r.add(SkillEVM, "build_token_approval", adapt(h.BuildTokenApproval))
@@ -127,9 +124,7 @@ func (r *Registry) RegisterEVM(h *tools.Handlers) {
 }
 
 // New builds the full-surface operation registry over the MCP tool handlers —
-// every bridged family. The optional services (agent-registry / delegation
-// queries, delegated execution) are registered by their own Register*
-// functions so milestones land independently; nil-safe wiring lives there.
+// every bridged family.
 func New(h *tools.Handlers) *Registry {
 	r := newRegistry()
 	r.RegisterMarketData(h)

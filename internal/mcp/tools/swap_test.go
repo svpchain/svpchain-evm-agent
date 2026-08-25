@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"math/big"
-	"strings"
 	"testing"
 
 	ethereum "github.com/ethereum/go-ethereum"
@@ -25,7 +24,7 @@ var (
 
 func TestParseSwapToken_Native(t *testing.T) {
 	for _, in := range []string{"", "native", "SVP", "svp", " native ", "0x0000000000000000000000000000000000000000"} {
-		addr, native, err := parseSwapToken(in)
+		addr, native, err := parseSwapToken(in, nil)
 		require.NoError(t, err, "input %q", in)
 		require.True(t, native, "input %q should be native", in)
 		require.Equal(t, common.Address{}, addr)
@@ -33,32 +32,27 @@ func TestParseSwapToken_Native(t *testing.T) {
 }
 
 func TestParseSwapToken_ERC20(t *testing.T) {
-	addr, native, err := parseSwapToken(swapTokenA.Hex())
+	addr, native, err := parseSwapToken(swapTokenA.Hex(), nil)
 	require.NoError(t, err)
 	require.False(t, native)
 	require.Equal(t, swapTokenA, addr)
 }
 
-func TestParseSwapToken_KnownSymbol(t *testing.T) {
-	cases := map[string]common.Address{
-		"usdv": common.HexToAddress("0x013a61E622e6ABFCaB64F52D274C3Fc0aA37f951"),
-		"usdc": common.HexToAddress("0x732F6Ea7AfD5EdC02e7ba052075dd0780e285489"),
-	}
-	for sym, want := range cases {
-		for _, in := range []string{sym, strings.ToUpper(sym), " " + sym + " "} {
-			addr, native, err := parseSwapToken(in)
-			require.NoError(t, err, "input %q", in)
-			require.False(t, native, "input %q should resolve to an ERC-20", in)
-			require.Equal(t, want, addr, "input %q", in)
-		}
+func TestParseSwapToken_Invalid(t *testing.T) {
+	for _, in := range []string{"0x123", "not-an-address", "0xZZZ", "usdc", "usdv"} {
+		_, _, err := parseSwapToken(in, nil)
+		require.Error(t, err, "input %q should be rejected", in)
 	}
 }
 
-func TestParseSwapToken_Invalid(t *testing.T) {
-	for _, in := range []string{"0x123", "not-an-address", "0xZZZ"} {
-		_, _, err := parseSwapToken(in)
-		require.Error(t, err, "input %q should be rejected", in)
+func TestParseSwapToken_ConfiguredAsset(t *testing.T) {
+	assets := map[string]ConfiguredEVMAsset{
+		"usdc": {Address: swapTokenA.Hex(), Decimals: 6},
 	}
+	addr, native, err := parseSwapToken(" USDC ", assets)
+	require.NoError(t, err)
+	require.False(t, native)
+	require.Equal(t, swapTokenA, addr)
 }
 
 func TestResolveSwapPlan(t *testing.T) {
@@ -114,11 +108,6 @@ func TestApplySlippage(t *testing.T) {
 func TestTokenLabel(t *testing.T) {
 	require.Equal(t, "native", tokenLabel(true, common.Address{}))
 	require.Equal(t, swapTokenA.Hex(), tokenLabel(false, swapTokenA))
-	// A known alias renders as its upper-cased symbol, not the raw address.
-	usdv := common.HexToAddress("0x013a61E622e6ABFCaB64F52D274C3Fc0aA37f951")
-	require.Equal(t, "USDV", tokenLabel(false, usdv))
-	usdc := common.HexToAddress("0x732F6Ea7AfD5EdC02e7ba052075dd0780e285489")
-	require.Equal(t, "USDC", tokenLabel(false, usdc))
 }
 
 func TestAddrsToHex(t *testing.T) {
@@ -194,7 +183,7 @@ func TestBuildSwap_AllowanceShort(t *testing.T) {
 	h, ctx := swapHandlers(t, &mockSwapEVM{decimals: 6, allowance: big.NewInt(0)})
 
 	_, out, err := h.BuildSwap(ctx, nil, BuildSwapInput{
-		TokenIn:  "usdv", // ERC-20 input -> allowance is checked
+		TokenIn:  swapTokenA.Hex(), // ERC-20 input -> allowance is checked
 		TokenOut: "native",
 		AmountIn: "100",
 		ClientID: "cid-swap-1",
@@ -205,7 +194,6 @@ func TestBuildSwap_AllowanceShort(t *testing.T) {
 	require.Equal(t, "build_token_approval", out.ApprovalRequired.Tool)
 	require.Equal(t, "build_swap", out.ApprovalRequired.RetryTool)
 	require.Equal(t, "100", out.ApprovalRequired.MinAmount)
-	usdv := common.HexToAddress("0x013a61E622e6ABFCaB64F52D274C3Fc0aA37f951").Hex()
-	require.Equal(t, usdv, out.ApprovalRequired.Token)
+	require.Equal(t, swapTokenA.Hex(), out.ApprovalRequired.Token)
 	require.Contains(t, out.ApprovalRequired.Message, "build_token_approval")
 }

@@ -3,8 +3,6 @@ package tools
 import (
 	"strings"
 
-	"github.com/ethereum/go-ethereum/common"
-
 	assettypes "github.com/dydxprotocol/v4-chain/protocol/x/assets/types"
 )
 
@@ -16,7 +14,7 @@ import (
 // resolves its moved asset back to a symbol here and accumulates against one
 // shared per-owner total.
 //
-// Agents set caps in these symbols (svp, usdc, usdv), not raw on-chain
+// Agents set caps in these symbols (svp, usdc), not raw on-chain
 // identifiers (asvp, erc20/usdc, 0x…), which end users don't recognise.
 
 // nativeBankDenom is the x/bank denom of the native gas token (atto-SVP). Kept
@@ -30,19 +28,16 @@ const nativeBankDenom = "asvp"
 // values, and they can be re-confirmed against an on-chain decimals() read.
 type assetSymbol struct {
 	symbol    string
-	bankDenom string         // "" when the symbol has no x/bank denom (pure ERC-20)
-	erc20     common.Address // zero when the symbol is not an ERC-20
-	native    bool           // true for native SVP (matches EVM value transfers)
+	bankDenom string
+	native    bool // true for native SVP (matches EVM value transfers)
 	decimals  int64
 }
 
-// transferOutAssets is built from the same constants the rest of the package
-// uses (the native denom, assettypes.UusdcDenom, and knownSwapTokens) so it
-// can't drift from them.
+// transferOutAssets covers the bank-denom assets with stable symbols. ERC-20
+// contracts are discovered dynamically, so they have no static cap symbol.
 var transferOutAssets = []assetSymbol{
 	{symbol: "svp", bankDenom: nativeBankDenom, native: true, decimals: 18},
-	{symbol: "usdc", bankDenom: assettypes.UusdcDenom, erc20: knownSwapTokens["usdc"].address, decimals: 6},
-	{symbol: "usdv", erc20: knownSwapTokens["usdv"].address, decimals: 6},
+	{symbol: "usdc", bankDenom: assettypes.UusdcDenom, decimals: 6},
 }
 
 // assetForSymbol looks up a registry entry by (case-insensitive) symbol.
@@ -60,16 +55,6 @@ func assetForSymbol(symbol string) (assetSymbol, bool) {
 func symbolForDenom(denom string) (string, bool) {
 	for _, a := range transferOutAssets {
 		if a.bankDenom != "" && a.bankDenom == denom {
-			return a.symbol, true
-		}
-	}
-	return "", false
-}
-
-// symbolForToken maps an ERC-20 contract address to its cap symbol.
-func symbolForToken(addr common.Address) (string, bool) {
-	for _, a := range transferOutAssets {
-		if a.erc20 != (common.Address{}) && a.erc20 == addr {
 			return a.symbol, true
 		}
 	}

@@ -6,9 +6,8 @@
 //
 // The production stdio signer MCP server lives in its own repo
 // (svpchain-signer-mcp), so remote callers sign their own payloads. This
-// package is retained for internal/operator, which uses ParsePrivKey and
-// DeriveAddress to load the operator key, and because signer_test.go is the
-// only executable spec of the sign-byte layout both sides agree on.
+// package is retained for compatibility tests and as the executable spec of
+// the sign-byte layout both sides agree on.
 //
 // The package's init() sets the svp bech32 prefix so every sdk.AccAddress
 // stringification (notably in DeriveAddress and the signer-address

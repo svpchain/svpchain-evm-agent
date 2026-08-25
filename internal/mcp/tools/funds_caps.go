@@ -13,7 +13,7 @@ import (
 )
 
 // These two tools let an agent read and set the per-symbol daily transfer-out
-// cap for ITS OWN authenticated wallet (svp / usdc / usdv). Caps are keyed by
+// cap for ITS OWN authenticated wallet (svp / usdc). Caps are keyed by
 // the owner wallet address, so all of a wallet's concurrent agents and re-auths
 // share one cap and one daily total (a fresh login can't reset the meter).
 // Caps are fully agent-controlled with no operator config: every symbol starts
@@ -25,7 +25,7 @@ import (
 // -- set_transfer_out_cap ----------------------------------------------
 
 type SetTransferOutCapInput struct {
-	Symbol string `json:"symbol" jsonschema:"token symbol to cap: \"svp\", \"usdc\", or \"usdv\""`
+	Symbol string `json:"symbol" jsonschema:"token symbol to cap: \"svp\" or \"usdc\""`
 	Amount string `json:"amount" jsonschema:"daily transfer-out cap in human token units, e.g. \"500\" or \"1.5\"; \"0\" means unlimited"`
 }
 
@@ -46,7 +46,7 @@ func (h *Handlers) SetTransferOutCap(
 	a, ok := assetForSymbol(in.Symbol)
 	if !ok {
 		return nil, SetTransferOutCapOutput{}, userErrf(
-			"unknown token symbol %q (known: svp, usdc, usdv)", in.Symbol)
+			"unknown token symbol %q (known: svp, usdc)", in.Symbol)
 	}
 
 	// "0" means unlimited — the zero-disables convention used throughout the
@@ -70,7 +70,7 @@ func (h *Handlers) SetTransferOutCap(
 // -- get_transfer_out_cap ----------------------------------------------
 
 type GetTransferOutCapInput struct {
-	Symbol string `json:"symbol,omitempty" jsonschema:"optional single symbol (svp/usdc/usdv); omit to list all"`
+	Symbol string `json:"symbol,omitempty" jsonschema:"optional single symbol (svp/usdc); omit to list all"`
 }
 
 type TransferOutCapDTO struct {
@@ -98,7 +98,7 @@ func (h *Handlers) GetTransferOutCap(
 		a, ok := assetForSymbol(s)
 		if !ok {
 			return nil, GetTransferOutCapOutput{}, userErrf(
-				"unknown token symbol %q (known: svp, usdc, usdv)", in.Symbol)
+				"unknown token symbol %q (known: svp, usdc)", in.Symbol)
 		}
 		assets = []assetSymbol{a}
 	}
