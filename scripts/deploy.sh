@@ -61,25 +61,23 @@
 #   --public-url <url>             The URL this agent advertises, used verbatim.
 #                                  SVPCHAIN_EVM_AGENT_PUBLIC_URL
 #
-#   SVPCHAIN_EVM_AGENT_OPERATOR_KEY
-#                                  The hex eth_secp256k1 operator key ITSELF, not
-#                                  a path — there is no flag for it, because a key
+#   SVPCHAIN_EVM_AGENT_OWNER_KEY
+#                                  The hex eth_secp256k1 OWNER key itself, not a
+#                                  path. Needed only by --register: it signs the
+#                                  registration and pays the fee and the bond.
+#                                  NOT needed to install, and never shipped to
+#                                  the host — the agent signs nothing, so a key
+#                                  there would be risk with no use.
+#                                  This one account is registered as both owner
+#                                  and operator, so the agent id derives from it
+#                                  and it can register exactly ONE agent.
+#                                  There is no flag for it, deliberately: a key
 #                                  on the command line lands in `ps` and in your
-#                                  shell history. Set it in the config file, which
-#                                  is sourced and can therefore compute it:
-#                                    SVPCHAIN_EVM_AGENT_OPERATOR_KEY="$(op read …)"
-#                                  Or let --gen-operator-key mint one and wire the
-#                                  config file to it.
-#                                  REQUIRED to install. The binary can run keyless
-#                                  — the execution skills refuse with a reason —
-#                                  but a deployed agent that does is a service
-#                                  nobody can reach: unregistrable, unable to
-#                                  execute, unable to be paid. It ships to the
-#                                  remote as a
-#                                  docker compose SECRET mounted at
-#                                  /run/secrets/operator_key — never as a container
-#                                  environment variable, which `docker inspect` and
-#                                  /proc/<pid>/environ would both expose.
+#                                  shell history. Let --gen-owner-key mint one
+#                                  and wire the config file to it, or set it
+#                                  yourself, which the sourced config file can
+#                                  compute:
+#                                    SVPCHAIN_EVM_AGENT_OWNER_KEY="$(op read …)"
 #   --operator-capabilities <csv>  Default "evm.swap,evm.bridge,evm.tokens".
 #                                  SVPCHAIN_OPERATOR_CAPABILITIES
 #   --operator-metadata <text>     SVPCHAIN_OPERATOR_METADATA
@@ -130,21 +128,30 @@
 # Modes:
 #   --init-config                  Write a starter config file to the config dir
 #                                  at 0600 and exit. Refuses to overwrite.
-#   --gen-operator-key             Mint this agent's operator key into the config
-#                                  dir at 0600, point the config file at it, and
-#                                  print the svp1… address to fund. The key is
-#                                  written, never printed. Refuses if one is
-#                                  already configured: a key is an on-chain
-#                                  identity with a bond against it, so a second
-#                                  one is a new agent, not a replacement.
-#   --register                     Put the DEPLOYED agent on chain, by calling
-#                                  agent_self_register on it over its public URL
-#                                  — or agent_self_update when it is already
-#                                  registered and the served card or the endpoint
-#                                  has moved since. Idempotent: an agent that is
+#   --gen-owner-key                Mint the key this agent registers under into
+#                                  the config dir at 0600, point the config file
+#                                  at it, and print the svp1… address to fund.
+#                                  The key is written, never printed, and never
+#                                  shipped to the host. Refuses if one already
+#                                  exists: this key is both the agent's on-chain
+#                                  id and the account holding its bond, so a
+#                                  second one is a new agent, not a replacement.
+#   --register                     Put the DEPLOYED agent on chain: fetch the
+#                                  card from --public-url, hash it, and sign a
+#                                  registration with the owner key HERE — or an
+#                                  update when the card or the endpoint has
+#                                  moved since. Idempotent: an agent that is
 #                                  already current is left alone.
+#   --register-grpc <addr>         --register only. gRPC endpoint reachable from
+#                                  THIS machine. --grpc-addr is the container's
+#                                  view and usually is not.
+#                                  SVPCHAIN_REGISTER_GRPC
 #   --bond <coin>                  --register only. Initial bond, e.g.
-#                                  1500000usvp. Default: the module's MinBond.
+#                                  5000000000000000000000asvp. Default: the
+#                                  module's MinBond.
+#   --gen-operator-key             REMOVED with delegated execution. Still
+#                                  parsed, so an older runbook is told where it
+#                                  went rather than getting an unknown flag.
 #   --print-env                    Show every setting, its resolved value and
 #                                  where it came from. The operator key prints as
 #                                  "set"/"unset", never its value.
@@ -153,7 +160,7 @@
 #
 # Examples:
 #   ./scripts/deploy.sh --init-config       # then edit the file it names
-#   ./scripts/deploy.sh --gen-operator-key  # mint an identity, print its address
+#   ./scripts/deploy.sh --gen-owner-key     # mint an identity, print its address
 #   ./scripts/deploy.sh --register          # put the deployed agent on chain
 #   ./scripts/deploy.sh                     # a configured install takes no flags
 #   ./scripts/deploy.sh --host www@svpdev1.example.com \
@@ -186,17 +193,14 @@ readonly AGENT_NAME="svpchain-evm-agent"
 readonly AGENT_PORT="8083"
 readonly IMAGE_REPO="ghcr.io/svpchain/svpchain-evm-agent"
 
-# The operator key travels as a docker compose secret rather than a bind mount
-# or a container environment variable. Compose mounts a secret at
-# /run/secrets/<name>, and unlike `environment:` it stays out of
-# `docker inspect` and /proc/<pid>/environ. Stated once here because the name
-# lands in three places — the service's secrets list, the top-level secrets
-# block, and the key_file path in agent.toml — and the agent boots keyless,
-# with nothing in the logs, if they disagree.
-readonly SECRET_NAME="operator_key"
-readonly SECRET_MOUNT_PATH="/run/secrets/${SECRET_NAME}"
-# Staged and shipped under this name; the top-level secrets block points here.
-readonly SECRET_FILE="operator.key"
+# The owner key does NOT ship to the remote, and there is deliberately no
+# machinery here for sending it. It used to: the agent held an operator key and
+# signed its own transactions, so the deploy shipped one as a compose secret.
+# The agent signs nothing now — callers sign their own transactions — so the
+# remote has no use for a key, while this one holds the agent's bond and its
+# registry record. A key on a deployed host that nothing reads is pure downside.
+# It stays in the config dir on the machine that registers, and only
+# --register reads it.
 
 # ---- config file -----------------------------------------------------------
 #
@@ -235,7 +239,7 @@ unset _i _j
 readonly CONFIG_VARS=(
   SVPCHAIN_DEPLOY_HOST SVPCHAIN_CHAIN_ID SVPCHAIN_GRPC_ADDR SVPCHAIN_COMET_RPC
   SVPCHAIN_INDEXER SVPCHAIN_AGENT_CHAIN_ID SVPCHAIN_AGENT_CHAIN_REST
-  SVPCHAIN_EVM_AGENT_PUBLIC_URL SVPCHAIN_EVM_AGENT_OPERATOR_KEY
+  SVPCHAIN_EVM_AGENT_PUBLIC_URL SVPCHAIN_EVM_AGENT_OWNER_KEY SVPCHAIN_REGISTER_GRPC
   SVPCHAIN_OPERATOR_CAPABILITIES SVPCHAIN_OPERATOR_METADATA SVPCHAIN_INSTALL_DIR
   SVPCHAIN_EVM_RPC SVPCHAIN_EVM_UNISWAP_ROUTER SVPCHAIN_EVM_WSVP
   SVPCHAIN_EVM_ORACLE SVPCHAIN_EVM_BRIDGE SVPCHAIN_EVM_BRIDGE_ROUTES
@@ -291,7 +295,7 @@ fi
 
 # ---- args ------------------------------------------------------------------
 
-mode="install"        # install | uninstall | init-config | gen-operator-key
+mode="install"        # install | uninstall | init-config | gen-owner-key | register | print-*
                       #         | register | print-env | print-config
                       #         | print-compose | print-nginx
                       #         | print-routes
@@ -310,10 +314,10 @@ indexer="${SVPCHAIN_INDEXER:-http://127.0.0.1:3002}"
 agent_chain_id="${SVPCHAIN_AGENT_CHAIN_ID:-}"
 agent_chain_rest="${SVPCHAIN_AGENT_CHAIN_REST:-}"
 public_url="${SVPCHAIN_EVM_AGENT_PUBLIC_URL:-https://agent-testnet.svpchain.org}"
-# The operator key MATERIAL, not a path. There is deliberately no flag for it:
+# The owner key MATERIAL, not a path. There is deliberately no flag for it:
 # a hex key in argv is visible in `ps` and lands in shell history. The config
 # file is sourced, so it can compute the value instead of storing it.
-operator_key="${SVPCHAIN_EVM_AGENT_OPERATOR_KEY:-}"
+owner_key="${SVPCHAIN_EVM_AGENT_OWNER_KEY:-}"
 operator_capabilities="${SVPCHAIN_OPERATOR_CAPABILITIES:-evm.swap,evm.bridge,evm.tokens}"
 operator_metadata="${SVPCHAIN_OPERATOR_METADATA:-}"
 evm_rpc="${SVPCHAIN_EVM_RPC:-http://127.0.0.1:8545}"
@@ -342,6 +346,13 @@ dry_run="0"
 # the x/agent module's own MinBond, which is the right answer for almost
 # everyone.
 register_bond=""
+# --register only. $grpc_addr is the address the deployed CONTAINER dials, and
+# on a normal deployment that is a loopback or private address meaningful only
+# on the remote host. Registration is signed and broadcast from THIS machine,
+# so it needs its own reachable endpoint — a public gRPC, or the local end of
+# an ssh tunnel. Defaults to $grpc_addr, which is right for a local dev chain
+# and wrong for most else.
+register_grpc="${SVPCHAIN_REGISTER_GRPC:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -379,9 +390,11 @@ while [[ $# -gt 0 ]]; do
     --config-dir)             mark_flag SVPCHAIN_CONFIG_DIR; shift 2 ;;
     --no-config)              shift ;;
     --init-config)            mode="init-config";     shift ;;
+    --gen-owner-key)          mode="gen-owner-key";   shift ;;
     --gen-operator-key)       mode="gen-operator-key"; shift ;;
     --register)               mode="register";        shift ;;
     --bond)                   register_bond="$2";     shift 2 ;;
+    --register-grpc)          register_grpc="$2"; mark_flag SVPCHAIN_REGISTER_GRPC; shift 2 ;;
     --print-env)              mode="print-env";       shift ;;
     --skip-build)             skip_build="1";         shift ;;
     --print-config)           mode="print-config";    shift ;;
@@ -405,14 +418,13 @@ done
 # that URL here.
 public_url="${public_url%/}"
 
-# $operator_key holds the key material itself, seeded from the environment
-# above. Normalised and validated once by resolve_operator_key, which runs
-# before anything is rendered.
+# $owner_key holds the key material itself, seeded from the environment above.
+# Normalised and validated once by resolve_owner_key.
 #
-# Empty is still a shape the RENDERERS handle — --print-config and
-# --print-compose will show you the keyless form, and the binary itself boots
-# that way, advertising the execution skills and refusing them at call time.
-# What refuses empty is the install: see require_install_args.
+# Empty is the normal state for everything except --register. An install needs
+# no key: nothing it renders or ships mentions one, because the deployed agent
+# signs nothing. --register is the one mode that refuses without it, since
+# registering IS the owner proving it holds the key the record is bound to.
 
 # The route registry this deploy ships, if any. Set by resolve_bridge_routes:
 # basename is what gets mounted beside agent.toml, src_abs is a local override
@@ -574,19 +586,10 @@ EOF
     [[ -n "$transfer_max"       ]] && echo "transfer_max_usdc       = ${transfer_max}"
     [[ -n "$daily_withdraw_cap" ]] && echo "daily_withdraw_cap_usdc = ${daily_withdraw_cap}"
   fi
-  # The operator key turns this agent's delegated execution on. key_file is
-  # left relative ("operator.key") on purpose — internal/config
-  # resolves it against the agent.toml directory, so it points at the file
-  # mounted beside the config.
-  if [[ -n "$operator_key" ]]; then
-    cat <<EOF
-
-[operator]
-key_file     = "${SECRET_MOUNT_PATH}"
-capabilities = $(emit_operator_capabilities)
-metadata     = "${operator_metadata}"
-EOF
-  fi
+  # No [operator] table. internal/config has no field for a signing key —
+  # "It never loads a caller or operator signing key" — and unknown keys are
+  # ignored rather than rejected, so emitting one would be a line that reads
+  # like configuration and does nothing.
 }
 
 # render_routes_json — the SVPBridge route registry, identical to the one the
@@ -665,56 +668,39 @@ EOF
   # would make the function return non-zero, and under `set -e` the
   # `render_compose_yaml > file` call site would exit the script silently.
   #
-  # A compose secret rather than a bind mount. Both end up as a read-only file
-  # in the container, but the secret keeps the operator key out of the volume
-  # list, which `docker inspect` prints in full.
-  #
-  # Note the uid/gid/mode options compose accepts on a secret are swarm-only
-  # and silently ignored here; the mount inherits the source file's ownership.
-  # That is fine because the image declares no USER, so the process is root and
-  # can read the 0600 file rsync lands.
-  if [[ -n "$operator_key" ]]; then
-    cat <<EOF
-    secrets:
-      - ${SECRET_NAME}
-
-secrets:
-  ${SECRET_NAME}:
-    file: ${install_dir}/${SECRET_FILE}
-EOF
-  fi
 }
 
 require_install_args() {
 	[[ -n "$host" ]] || fail "--host is required (or set SVPCHAIN_DEPLOY_HOST)"
 }
 
-# validate_hex_key — the VALUE must look like a 32-byte hex operator key.
+# validate_hex_key — the VALUE must look like a 32-byte hex owner key.
 # Takes the key itself, not a path, so validation happens before the material
 # is written anywhere. The error deliberately does not echo the value.
 validate_hex_key() {
   [[ "$1" =~ ^(0x)?[0-9a-fA-F]{64}$ ]] \
-    || fail "SVPCHAIN_EVM_AGENT_OPERATOR_KEY does not look like a 32-byte hex key (got ${#1} characters)"
+    || fail "SVPCHAIN_EVM_AGENT_OWNER_KEY does not look like a 32-byte hex key (got ${#1} characters)"
 }
 
-# resolve_operator_key — normalise and validate the key material supplied in
-# SVPCHAIN_EVM_AGENT_OPERATOR_KEY. Empty is allowed through here: the
-# print modes render the keyless form deliberately, and require_install_args is
-# what refuses to install one.
+# resolve_owner_key — normalise and validate the key material supplied in
+# SVPCHAIN_EVM_AGENT_OWNER_KEY. Empty is allowed through: an install needs no
+# key at all now, and only --register refuses without one.
 #
 # The trim matters more than it looks: the natural way to set this is
 # `="$(cat …)"` or `="$(op read …)"`, and a trailing newline from either would
 # fail the hex check for a key that is perfectly good.
 #
-# The key must be distinct from every other agent's — an agent's on-chain id
-# derives from it and agent_self_register hashes this binary's own card, so a
-# shared key makes two agents collide on one registry record. With the agents
-# in separate repos nothing can check that here; it is an operational rule.
-resolve_operator_key() {
-  [[ -n "$operator_key" ]] || return 0
+# The key must be distinct from every other agent's. This one account is
+# registered as BOTH owner and operator, and x/agent binds an operator address
+# to at most one agent — so a key shared between two agents does not merely
+# collide, it makes the second registration impossible. With the agents in
+# separate repos nothing can check that here; the per-agent config dir is what
+# makes sharing one hard to do by accident.
+resolve_owner_key() {
+  [[ -n "$owner_key" ]] || return 0
   # Strip surrounding whitespace, including a trailing newline.
-  operator_key="$(printf '%s' "$operator_key" | tr -d '[:space:]')"
-  validate_hex_key "$operator_key"
+  owner_key="$(printf '%s' "$owner_key" | tr -d '[:space:]')"
+  validate_hex_key "$owner_key"
 }
 
 # resolve_remote_install_dir — expand a leading ~ in $install_dir to the
@@ -852,61 +838,74 @@ if [[ "$mode" == "init-config" ]]; then
   step "Wrote ${dst} (mode 600)"
   info "Edit it — at minimum SVPCHAIN_DEPLOY_HOST and SVPCHAIN_EVM_AGENT_PUBLIC_URL —"
   info "then run ./scripts/deploy.sh"
-  info "For delegated execution this agent also needs an operator key:"
-  info "  ./scripts/deploy.sh --gen-operator-key"
+  info "To register this agent on chain it also needs an owner key:"
+  info "  ./scripts/deploy.sh --gen-owner-key"
   exit 0
 fi
 
-# ---- mode: gen-operator-key -----------------------------------------------
+# ---- mode: gen-operator-key (removed) -------------------------------------
 #
-# Mint this agent's operator key and point the config file at it. One step, on
-# purpose: a key generated and not referenced deploys keyless and says nothing,
-# while a config line naming a key that was never generated fails the *source*
-# and takes every other mode down with it — which is exactly why the template
-# ships that line commented out.
+# Delegated execution went with the switch to caller-signed MCP, and the
+# operator key with it: the agent signs nothing, and cmd/operator-keygen no
+# longer exists. The flag is still PARSED so an operator working from an older
+# runbook is told where it went rather than getting "unknown flag".
 #
-# The key material never passes through this script. cmd/operator-keygen
-# creates the file itself with O_EXCL at 0600 and prints only the derived
-# address, so the secret is never in a shell variable, in argv, or in `set -x`
-# output. What comes back is the one thing needed next: the address to fund.
+# The successor is not a rename. An operator key was the AGENT's key and lived
+# on the deployed host; an owner key is the OPERATOR's and never leaves this
+# machine.
+if [[ "$mode" == "gen-operator-key" ]]; then
+  fail "--gen-operator-key is gone: this agent signs nothing, so it has no operator key. Registration is now signed by an OWNER key held here — use --gen-owner-key"
+fi
+
+# ---- mode: gen-owner-key --------------------------------------------------
 #
-# Every refusal below is about the same fact. The key IS this agent's on-chain
-# identity — agent_self_register derives the agent id from it and bonds funds
-# against it — so replacing one strands a registration and its bond with
-# nothing on either side reporting a fault. There is deliberately no --force:
-# an operator who really means to start over deletes the file, which is a
-# harder thing to do by accident than passing a flag.
+# Mint the key this agent registers under and point the config file at it. One
+# step, on purpose: a key generated and not referenced leaves --register saying
+# it has none, while a config line naming a key that was never generated fails
+# the *source* and takes every other mode down with it.
+#
+# The key material never passes through this script. cmd/owner-keygen creates
+# the file itself with O_EXCL at 0600 and prints only the derived address, so
+# the secret is never in a shell variable, in argv, or in `set -x` output. What
+# comes back is the one thing needed next: the address to fund.
+#
+# Every refusal below is about the same fact. This account is registered as
+# BOTH owner and operator, so it is simultaneously the agent's on-chain id and
+# the account holding its bond — replacing one strands a registration and its
+# bond with nothing on either side reporting a fault. There is deliberately no
+# --force: an operator who really means to start over deletes the file, which
+# is harder to do by accident than passing a flag.
 #
 # Runs before require_install_args for the same reason init-config does:
 # bootstrapping an identity needs no host.
-if [[ "$mode" == "gen-operator-key" ]]; then
-  key_file="${config_dir}/operator.key"
+if [[ "$mode" == "gen-owner-key" ]]; then
+  key_file="${config_dir}/owner.key"
   config_file="${config_dir}/config.sh"
 
   # --no-config asks the script to ignore the file this mode's whole second
   # half writes to, so there is no coherent thing to do.
   [[ "$use_config" == "1" ]] \
-    || fail "--gen-operator-key wires up the config file, so it cannot run with --no-config"
+    || fail "--gen-owner-key wires up the config file, so it cannot run with --no-config"
   require_cmd go
 
   # Already keyed, from whichever layer — --print-env names it. Includes the
   # case where the key came from the environment for this one invocation, which
   # is still an identity this agent may be registered under.
-  if [[ -n "$operator_key" ]]; then
-    fail "an operator key is already configured (--print-env says from where) — generating another would be a second identity, not a replacement"
+  if [[ -n "$owner_key" ]]; then
+    fail "an owner key is already configured (--print-env says from where) — generating another would be a second identity, not a replacement"
   fi
   if [[ -e "$key_file" ]]; then
-    fail "refusing to overwrite ${key_file} — that key may already be registered on chain, with a bond posted against it; move it aside first if you truly mean to start over"
+    fail "refusing to overwrite ${key_file} — that key may already hold this agent's registration and its bond; move it aside first if you truly mean to start over"
   fi
   if [[ ! -f "$config_file" ]]; then
     fail "no config file at ${config_file} — run ./scripts/deploy.sh --init-config first"
   fi
-  # Catches what the $operator_key check above cannot: a live assignment whose
+  # Catches what the $owner_key check above cannot: a live assignment whose
   # command substitution resolved to nothing (an `op read` against a vault that
   # is not unlocked, say). Rewriting that line would throw away the operator's
   # own key source.
-  if grep -q '^SVPCHAIN_EVM_AGENT_OPERATOR_KEY=' "$config_file"; then
-    fail "${config_file} already assigns SVPCHAIN_EVM_AGENT_OPERATOR_KEY (it resolved to nothing — a locked vault?); fix or remove that line first"
+  if grep -q '^SVPCHAIN_EVM_AGENT_OWNER_KEY=' "$config_file"; then
+    fail "${config_file} already assigns SVPCHAIN_EVM_AGENT_OWNER_KEY (it resolved to nothing — a locked vault?); fix or remove that line first"
   fi
 
   mkdir -p "$config_dir" || fail "could not create ${config_dir}"
@@ -914,21 +913,21 @@ if [[ "$mode" == "gen-operator-key" ]]; then
   # GOWORK=off matches the Makefile: a go.work in the parent directory would
   # resolve this module from sibling checkouts rather than the pinned versions.
   # stdout is the address and nothing else; the key went to the file.
-  operator_addr="$(cd "$repo_dir" && GOWORK=off go run ./cmd/operator-keygen -out "$key_file")" \
+  owner_addr="$(cd "$repo_dir" && GOWORK=off go run ./cmd/owner-keygen -out "$key_file")" \
     || fail "key generation failed; ${key_file} was not written"
 
   # Rewrite rather than append, so a second run cannot leave two assignments
   # with the last one silently winning. The pattern is deliberately tight —
   # an optional '#' immediately followed by the name — because the template
-  # carries indented `#   SVPCHAIN_…_OPERATOR_KEY="$(op read …)"` lines as
+  # carries indented `#   SVPCHAIN_…_OWNER_KEY="$(op read …)"` lines as
   # documentation, and rewriting one of those would eat the docs and leave the
   # real line untouched.
-  key_line="SVPCHAIN_EVM_AGENT_OPERATOR_KEY=\"\$(cat \"${key_file}\")\""
+  key_line="SVPCHAIN_EVM_AGENT_OWNER_KEY=\"\$(cat \"${key_file}\")\""
   tmp_config="${config_file}.gen.$$"
   (
     umask 077
     awk -v line="$key_line" '
-      /^#?SVPCHAIN_EVM_AGENT_OPERATOR_KEY=/ && !seen { print line; seen = 1; next }
+      /^#?SVPCHAIN_EVM_AGENT_OWNER_KEY=/ && !seen { print line; seen = 1; next }
       { print }
       END { if (!seen) { print ""; print line } }
     ' "$config_file" > "$tmp_config"
@@ -938,15 +937,16 @@ if [[ "$mode" == "gen-operator-key" ]]; then
   mv "$tmp_config" "$config_file" || { rm -f "$tmp_config"; fail "could not replace ${config_file}"; }
   chmod 600 "$config_file"
 
-  step "Operator key created"
+  step "Owner key created"
   pass "key     ${key_file} (mode 600)"
-  pass "address ${operator_addr}"
+  pass "address ${owner_addr}"
   pass "config  ${config_file} now reads the key from that file"
-  info "Back up the key file. It is this agent's identity: lose it and the"
-  info "on-chain registration and its bond are unreachable, and a new key is a"
-  info "different agent rather than a recovery."
-  info "Next: fund ${operator_addr} with the bond plus gas, deploy, then"
-  info "./scripts/deploy.sh --register"
+  info "Back up the key file. It is this agent's on-chain identity AND the"
+  info "account holding its bond: lose it and the registration and the bond are"
+  info "unreachable, and a new key is a different agent rather than a recovery."
+  info "It stays on this machine — the deploy never ships it to the host."
+  info "Next: fund ${owner_addr} with the registration fee, the bond and gas,"
+  info "deploy, then ./scripts/deploy.sh --register"
   exit 0
 fi
 
@@ -955,28 +955,33 @@ fi
 # Put the deployed agent on chain, or bring an already-registered one back in
 # line with what it now serves.
 #
-# This cannot be a local operation. What gets published is the sha256 of the
-# agent card as SERVED, so the thing that registers has to be a running agent
-# answering at a URL — hence agent_self_register is a tool on the A2A surface,
-# and this mode is a client of the agent it just deployed rather than another
-# renderer of local state.
+# This cannot be a purely local operation. What gets published is the sha256 of
+# the agent card as SERVED, so the thing being registered has to be a running
+# agent answering at a URL — cmd/agent-register fetches the card from
+# $public_url and hashes exactly those bytes.
 #
 # It runs against $public_url deliberately, not over the ssh connection. That
 # URL is what goes into the registration and what a verifier will fetch, so a
 # registration that succeeds through it has proven the route as a side effect.
 # A host that DNS or nginx does not point here fails at this step instead of
-# registering an endpoint that 404s — see cmd/agent-register for the loopback
-# escape hatch when that is genuinely wanted.
+# registering an endpoint that 404s.
 #
-# The key travels in the environment of the child process rather than in argv,
-# where `ps` would show it. It signs only the auth challenge that proves the
-# caller is the operator; the transaction itself is signed by the agent, on the
-# remote, with the copy the deploy shipped as a compose secret.
+# The SIGNING is local, which is the part that changed. There is no key on the
+# remote to sign with any more, so the owner key here signs MsgRegisterAgent
+# directly and the agent's only role is serving the bytes that get hashed. The
+# key travels in the child process's environment rather than in argv, where
+# `ps` would show it.
 if [[ "$mode" == "register" ]]; then
   require_cmd go
-  resolve_operator_key
-  [[ -n "$operator_key" ]] \
-    || fail "no operator key configured — registration is the operator proving it holds the key this agent runs as (see --gen-operator-key)"
+  resolve_owner_key
+  [[ -n "$owner_key" ]] \
+    || fail "no owner key configured — registration is the owner proving it holds the key this agent is registered under (see --gen-owner-key)"
+  [[ -n "$chain_id" ]] || fail "--chain-id is required to register: it names the chain carrying x/agent"
+  # Falls back to the container's endpoint, which is right only when the chain
+  # is reachable at the same address from here — a local dev node, typically.
+  register_grpc="${register_grpc:-$grpc_addr}"
+  [[ -n "$register_grpc" ]] \
+    || fail "no gRPC endpoint to register through — set --register-grpc (--grpc-addr is the container's view of the chain, not necessarily reachable from here)"
 
   repo_dir="$(cd "${SCRIPT_DIR}/.." && pwd)"
   step "Registering ${AGENT_NAME} at ${public_url}"
@@ -985,12 +990,17 @@ if [[ "$mode" == "register" ]]; then
   # sibling checkouts rather than the versions go.mod pins.
   (
     cd "$repo_dir" || exit 1
-    export SVPCHAIN_EVM_AGENT_OPERATOR_KEY="$operator_key"
-    if [[ -n "$register_bond" ]]; then
-      GOWORK=off go run ./cmd/agent-register -url "$public_url" -bond "$register_bond"
-    else
-      GOWORK=off go run ./cmd/agent-register -url "$public_url"
-    fi
+    export SVPCHAIN_EVM_AGENT_OWNER_KEY="$owner_key"
+    args=(
+      -url "$public_url"
+      -chain-id "$chain_id"
+      -grpc "$register_grpc"
+      -capabilities "$operator_capabilities"
+    )
+    if [[ -n "$register_bond" ]]; then    args+=(-bond "$register_bond");        fi
+    if [[ -n "$operator_metadata" ]]; then args+=(-metadata "$operator_metadata"); fi
+    if [[ "$dry_run" == "1" ]]; then       args+=(-dry-run);                      fi
+    GOWORK=off go run ./cmd/agent-register "${args[@]}"
   ) || fail "registration failed"
   exit 0
 fi
@@ -1012,7 +1022,7 @@ if [[ "$mode" == "print-env" ]]; then
     SVPCHAIN_CONFIG_DIR SVPCHAIN_DEPLOY_HOST SVPCHAIN_CHAIN_ID SVPCHAIN_GRPC_ADDR
     SVPCHAIN_COMET_RPC SVPCHAIN_INDEXER SVPCHAIN_AGENT_CHAIN_ID
     SVPCHAIN_AGENT_CHAIN_REST SVPCHAIN_EVM_AGENT_PUBLIC_URL
-    SVPCHAIN_EVM_AGENT_OPERATOR_KEY SVPCHAIN_OPERATOR_CAPABILITIES
+    SVPCHAIN_EVM_AGENT_OWNER_KEY SVPCHAIN_REGISTER_GRPC SVPCHAIN_OPERATOR_CAPABILITIES
     SVPCHAIN_OPERATOR_METADATA SVPCHAIN_EVM_RPC SVPCHAIN_EVM_UNISWAP_ROUTER
     SVPCHAIN_EVM_WSVP SVPCHAIN_EVM_UNISWAP_FACTORY SVPCHAIN_EVM_ORACLE SVPCHAIN_EVM_BRIDGE
     SVPCHAIN_EVM_BRIDGE_ROUTES SVPCHAIN_EVM_BRIDGE_ROUTES_SRC
@@ -1026,7 +1036,7 @@ if [[ "$mode" == "print-env" ]]; then
     "$config_dir" "$host" "$chain_id" "$grpc_addr"
     "$comet_rpc" "$indexer" "$agent_chain_id"
     "$agent_chain_rest" "$public_url"
-    "$operator_key" "$operator_capabilities"
+    "$owner_key" "$register_grpc" "$operator_capabilities"
     "$operator_metadata" "$evm_rpc" "$evm_uniswap_router"
     "$evm_wsvp" "$evm_uniswap_factory" "$evm_oracle" "$evm_bridge_addr"
     "$evm_bridge_routes" "$evm_bridge_routes_src"
@@ -1059,7 +1069,7 @@ if [[ "$mode" == "print-env" ]]; then
     # from "the command substitution returned nothing". Trimmed but NOT
     # validated: a malformed key should still be diagnosable here rather than
     # aborting the one mode you would reach for to diagnose it.
-    if [[ "$name" == "SVPCHAIN_EVM_AGENT_OPERATOR_KEY" ]]; then
+    if [[ "$name" == "SVPCHAIN_EVM_AGENT_OWNER_KEY" ]]; then
       value="$(printf '%s' "$value" | tr -d '[:space:]')"
       if [[ -n "$value" ]]; then value="set (${#value} chars)"; else value="unset"; fi
     fi
@@ -1077,7 +1087,7 @@ if [[ "$mode" == "print-config" ]]; then
   # Preview the agent.toml this deploy would ship, [operator] block included
   # when the environment supplies a key. The key material is never in this
   # file — it ships as a separate compose secret.
-  resolve_operator_key
+  resolve_owner_key
   render_agent_toml
   exit 0
 fi
@@ -1088,7 +1098,7 @@ if [[ "$mode" == "print-compose" ]]; then
   # Preview the docker-compose.yml. Uses a placeholder install_dir/image when
   # not resolved, and shows the secrets block when a key is configured. The key
   # itself is not here either — the block points at the file the deploy stages.
-  resolve_operator_key
+  resolve_owner_key
   resolve_bridge_routes
   image_ref="${IMAGE_REPO}:${image_tag:-<tag>}"
   render_compose_yaml
@@ -1125,10 +1135,6 @@ if [[ "$mode" == "uninstall" ]]; then
   exit 0
 fi
 
-if [[ "$mode" == "gen-operator-key" || "$mode" == "register" ]]; then
-  fail "on-chain agent registration and delegated execution were removed; this service uses caller-signed MCP transactions"
-fi
-
 # ---- mode: install --------------------------------------------------------
 
 require_install_args
@@ -1140,7 +1146,7 @@ require_cmd go
 # Resolve the operator key path and any --evm-bridge-routes-src (both against
 # the operator's CWD, before any cd) and validate them. The key's presence was
 # already required above; this is what checks it is actually a key.
-resolve_operator_key
+resolve_owner_key
 resolve_bridge_routes
 if [[ -n "$evm_bridge_addr" && -z "$bridge_routes_basename" ]]; then
   info "bridge: evm_bridge_routes is absolute ($evm_bridge_routes) — not auto-shipping; ensure that path exists on $host."
@@ -1218,12 +1224,6 @@ trap 'rm -rf "$stage_dir"' EXIT
 
 render_agent_toml   > "$stage_dir/agent.toml"
 render_compose_yaml > "$stage_dir/docker-compose.yml"
-if [[ -n "$operator_key" ]]; then
-  # printf, not cp: the key came from the environment, and this is the one
-  # place it touches a disk. mktemp -d gave $stage_dir 0700, so the file is
-  # never readable by other users even between creation and the chmod below.
-  printf '%s\n' "$operator_key" > "$stage_dir/${SECRET_FILE}"
-fi
 # The route registry: --evm-bridge-routes-src when given, otherwise the
 # built-in whitelist. Core reads it at boot, so it must land with the config.
 if [[ -n "$bridge_routes_basename" ]]; then
@@ -1301,3 +1301,4 @@ step "Done — $AGENT_NAME $image_tag running on $host (:${AGENT_PORT}, advertis
 # matches its registration reads as unverified with every process healthy.
 info "If the card or the public URL changed, publish it:"
 info "  ./scripts/deploy.sh --register    (also does the first registration)"
+

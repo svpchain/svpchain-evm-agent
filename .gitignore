@@ -5,8 +5,10 @@
 
 # `go build ./cmd/<name>` (no -o) drops a 50-150MB binary in the repo root.
 /svpchain-evm-agent
+/owner-keygen
+/agent-register
 
-# Operator key material. Never committed.
+# Owner key material. Never committed.
 *.key
 
 # Local EVM contract directory. Keep deployment-specific addresses local.

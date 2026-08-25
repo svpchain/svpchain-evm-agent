@@ -37,3 +37,25 @@ SVPCHAIN_EVM_AGENT_PUBLIC_URL="https://evm-agent.svpchain.org"
 
 # Remote installation directory.
 #SVPCHAIN_INSTALL_DIR="~/svpchain-evm-agent"
+
+# ---- registration ----------------------------------------------------------
+#
+# The OWNER key: the account that registers this agent on chain, pays the
+# registration fee and the bond, and controls the record thereafter. Needed
+# only by --register. It is never shipped to the deployed host — the agent
+# signs nothing, so a key there would be risk with no use.
+#
+# This one account is registered as both owner and operator, so the agent id
+# (did:svp:<address>) derives from it and it can register exactly ONE agent.
+# A second agent needs its own key, in its own config directory.
+#
+# ./scripts/deploy.sh --gen-owner-key mints one and rewrites the line below.
+# Setting it by hand is fine too; this file is sourced, so it can compute the
+# value rather than store it:
+#   SVPCHAIN_EVM_AGENT_OWNER_KEY="$(op read op://vault/svpchain-evm-agent/owner-key)"
+#SVPCHAIN_EVM_AGENT_OWNER_KEY=""
+
+# gRPC endpoint reachable from THIS machine, used only by --register.
+# SVPCHAIN_GRPC_ADDR above is the address the deployed container dials, which
+# on a normal deployment is meaningful only on the remote host.
+#SVPCHAIN_REGISTER_GRPC="grpc.testnet.svpchain.org:443"
