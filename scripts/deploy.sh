@@ -45,6 +45,12 @@
 # Required:
 #   --host user@hostname           SSH target.            SVPCHAIN_DEPLOY_HOST
 #
+# Optional:
+#   --jump-box user@bastion        Reach --host through this SSH jump host
+#                                  (ssh -J). Every ssh and rsync in the run
+#                                  goes via it. Comma-separate to chain hops.
+#                                                         SVPCHAIN_DEPLOY_JUMP_BOX
+#
 # Chain endpoints:
 #   --chain-id <id>                SVPCHAIN_CHAIN_ID     (svp-2517-1)
 #   --grpc-addr <host:port>        SVPCHAIN_GRPC_ADDR    (127.0.0.1:9090)
@@ -166,6 +172,7 @@
 #   ./scripts/deploy.sh --host www@svpdev1.example.com \
 #     --public-url https://evm-agent.svpchain.org
 #   ./scripts/deploy.sh --uninstall --host www@svpdev1.example.com
+#   ./scripts/deploy.sh --host www@10.0.1.7 --jump-box ops@bastion.example.com
 #
 set -euo pipefail
 
@@ -237,8 +244,8 @@ unset _i _j
 # Names the config file may set. Snapshotted before sourcing so anything the
 # caller already exported survives.
 readonly CONFIG_VARS=(
-  SVPCHAIN_DEPLOY_HOST SVPCHAIN_CHAIN_ID SVPCHAIN_GRPC_ADDR SVPCHAIN_COMET_RPC
-  SVPCHAIN_INDEXER SVPCHAIN_AGENT_CHAIN_ID SVPCHAIN_AGENT_CHAIN_REST
+  SVPCHAIN_DEPLOY_HOST SVPCHAIN_DEPLOY_JUMP_BOX SVPCHAIN_CHAIN_ID SVPCHAIN_GRPC_ADDR
+  SVPCHAIN_COMET_RPC SVPCHAIN_INDEXER SVPCHAIN_AGENT_CHAIN_ID SVPCHAIN_AGENT_CHAIN_REST
   SVPCHAIN_EVM_AGENT_PUBLIC_URL SVPCHAIN_EVM_AGENT_OWNER_KEY SVPCHAIN_REGISTER_GRPC
   SVPCHAIN_OPERATOR_CAPABILITIES SVPCHAIN_OPERATOR_METADATA SVPCHAIN_INSTALL_DIR
   SVPCHAIN_EVM_RPC SVPCHAIN_EVM_UNISWAP_ROUTER SVPCHAIN_EVM_WSVP
@@ -307,6 +314,7 @@ mark_flag() { FLAG_SET+="$1 "; }
 was_flag()  { [[ "$FLAG_SET" == *" $1 "* ]]; }
 
 host=""
+jump_box="${SVPCHAIN_DEPLOY_JUMP_BOX:-}"
 chain_id="${SVPCHAIN_CHAIN_ID:-svp-2517-1}"
 grpc_addr="${SVPCHAIN_GRPC_ADDR:-127.0.0.1:9090}"
 comet_rpc="${SVPCHAIN_COMET_RPC:-http://127.0.0.1:26657}"
@@ -357,6 +365,7 @@ register_grpc="${SVPCHAIN_REGISTER_GRPC:-}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --host)                   host="$2"; mark_flag SVPCHAIN_DEPLOY_HOST;              shift 2 ;;
+    --jump-box)               jump_box="$2"; mark_flag SVPCHAIN_DEPLOY_JUMP_BOX;      shift 2 ;;
     --chain-id)               chain_id="$2"; mark_flag SVPCHAIN_CHAIN_ID;          shift 2 ;;
     --grpc-addr)              grpc_addr="$2"; mark_flag SVPCHAIN_GRPC_ADDR;         shift 2 ;;
     --comet-rpc)              comet_rpc="$2"; mark_flag SVPCHAIN_COMET_RPC;         shift 2 ;;
@@ -411,6 +420,18 @@ while [[ $# -gt 0 ]]; do
 done
 
 : "${host:=${SVPCHAIN_DEPLOY_HOST:-}}"
+
+# Every ssh in this script, and rsync's transport, goes through $ssh_cmd so a
+# jump box applies to all of them at once. -J is ProxyJump: the connection to
+# $host is tunnelled through the bastion, end-to-end encrypted, and the
+# operator's keys never leave this machine (no agent forwarding needed — but
+# the bastion must be able to reach $host, and $host must accept the same key
+# the bastion did, or one it has its own ssh config for). Kept as a string,
+# not an array, because rsync -e wants one.
+ssh_cmd="ssh -o BatchMode=yes"
+if [[ -n "$jump_box" ]]; then
+  ssh_cmd+=" -J $(printf '%q' "$jump_box")"
+fi
 
 # Strip a trailing slash (from the flag or env) so the card's
 # "<public_url>/invoke" join stays clean. Nothing else is done to it: what you
@@ -710,7 +731,7 @@ resolve_remote_install_dir() {
     "~"|"~/"*)
       [[ "$dry_run" == "1" ]] && return 0
       local home
-      home="$(ssh -o BatchMode=yes "$host" 'printf %s "$HOME"')" \
+      home="$($ssh_cmd "$host" 'printf %s "$HOME"')" \
         || fail "could not resolve remote \$HOME on $host"
       [[ -n "$home" ]] || fail "remote \$HOME is empty on $host"
       install_dir="${home}${install_dir#\~}"
@@ -727,7 +748,7 @@ run_or_print() {
 }
 
 remote_exec() {
-  run_or_print "ssh -o BatchMode=yes '$host' $(printf '%q ' "$@")"
+  run_or_print "$ssh_cmd '$host' $(printf '%q ' "$@")"
 }
 
 remote_image_id() {
@@ -736,7 +757,7 @@ remote_image_id() {
     echo ""
     return
   fi
-  ssh -o BatchMode=yes "$host" "docker image inspect --format '{{.Id}}' $img 2>/dev/null || true"
+  $ssh_cmd "$host" "docker image inspect --format '{{.Id}}' $img 2>/dev/null || true"
 }
 
 local_image_id() {
@@ -1019,7 +1040,7 @@ if [[ "$mode" == "print-env" ]]; then
   # Name → the local variable holding the resolved value. Parallel arrays
   # rather than an associative array, because macOS still ships bash 3.2.
   env_names=(
-    SVPCHAIN_CONFIG_DIR SVPCHAIN_DEPLOY_HOST SVPCHAIN_CHAIN_ID SVPCHAIN_GRPC_ADDR
+    SVPCHAIN_CONFIG_DIR SVPCHAIN_DEPLOY_HOST SVPCHAIN_DEPLOY_JUMP_BOX SVPCHAIN_CHAIN_ID SVPCHAIN_GRPC_ADDR
     SVPCHAIN_COMET_RPC SVPCHAIN_INDEXER SVPCHAIN_AGENT_CHAIN_ID
     SVPCHAIN_AGENT_CHAIN_REST SVPCHAIN_EVM_AGENT_PUBLIC_URL
     SVPCHAIN_EVM_AGENT_OWNER_KEY SVPCHAIN_REGISTER_GRPC SVPCHAIN_OPERATOR_CAPABILITIES
@@ -1033,7 +1054,7 @@ if [[ "$mode" == "print-env" ]]; then
     SVPCHAIN_INSTALL_DIR
   )
   env_values=(
-    "$config_dir" "$host" "$chain_id" "$grpc_addr"
+    "$config_dir" "$host" "$jump_box" "$chain_id" "$grpc_addr"
     "$comet_rpc" "$indexer" "$agent_chain_id"
     "$agent_chain_rest" "$public_url"
     "$owner_key" "$register_grpc" "$operator_capabilities"
@@ -1164,14 +1185,14 @@ image_tar="${REPO_DIR}/build/${AGENT_NAME}.image.tar"
 mkdir -p "${REPO_DIR}/build"
 
 step "Preflight (remote)"
-info "host=$host image=$image_ref platform=$platform"
+info "host=$host${jump_box:+ via jump-box=$jump_box} image=$image_ref platform=$platform"
 info "install_dir=$install_dir public_url=$public_url"
 info "  ${AGENT_NAME} :${AGENT_PORT} — caller-signed EVM service"
 if [[ "$dry_run" != "1" ]]; then
-  ssh -o BatchMode=yes "$host" "docker version --format '{{.Server.Version}}'" \
+  $ssh_cmd "$host" "docker version --format '{{.Server.Version}}'" \
     >/dev/null 2>&1 \
     || fail "remote docker not reachable at $host without sudo (ssh keys ok? docker installed? ssh user in the docker group?)"
-  ssh -o BatchMode=yes "$host" "docker compose version" >/dev/null 2>&1 \
+  $ssh_cmd "$host" "docker compose version" >/dev/null 2>&1 \
     || fail "remote 'docker compose' (v2 plugin) not available at $host"
   pass "remote docker + compose reachable"
 else
@@ -1240,11 +1261,11 @@ remote_exec "mkdir -p $install_dir $install_dir/data"
 # The trailing slash on the source is load-bearing: without it rsync creates
 # $install_dir/<staging-dir-name>/ and the agent keeps running against its old
 # agent.toml, with nothing anywhere reporting an error.
-run_or_print "rsync -avz '$stage_dir/' '$host:$install_dir/'"
+run_or_print "rsync -avz -e '$ssh_cmd' '$stage_dir/' '$host:$install_dir/'"
 # The image tar ships separately: save_if_changed keys its skip on the
 # ${image_tar}.id sidecar in build/, so folding a multi-hundred-MB file into
 # the staging dir would mean copying it on every run.
-run_or_print "rsync -avz '$image_tar' '$host:$install_dir/${AGENT_NAME}.image.tar'"
+run_or_print "rsync -avz -e '$ssh_cmd' '$image_tar' '$host:$install_dir/${AGENT_NAME}.image.tar'"
 
 # Phase 4: load (On remote)
 step "On remote: docker load (skipped if image already loaded)"
@@ -1268,7 +1289,7 @@ else
   # refresh before serving; give it a few seconds to come up.
   healthy=""
   for _ in 1 2 3 4 5 6 7 8 9 10; do
-    code=$(ssh -o BatchMode=yes "$host" \
+    code=$($ssh_cmd "$host" \
       "curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:${AGENT_PORT}/healthz" \
       2>/dev/null || echo 000)
     if [[ "$code" == "200" ]]; then healthy="1"; break; fi
@@ -1276,12 +1297,12 @@ else
   done
   if [[ -z "$healthy" ]]; then
     info "healthz on :${AGENT_PORT} did not answer 200. Check logs with:"
-    info "  ssh $host 'docker logs $AGENT_NAME --tail=80'"
+    info "  ssh${jump_box:+ -J $jump_box} $host 'docker logs $AGENT_NAME --tail=80'"
     info "Common cause: the gRPC/RPC endpoints in agent.toml are not reachable"
     info "from inside the container."
     fail "smoke test failed for $AGENT_NAME"
   fi
-  skills=$(ssh -o BatchMode=yes "$host" \
+  skills=$($ssh_cmd "$host" \
     "curl -sS --max-time 5 http://127.0.0.1:${AGENT_PORT}/.well-known/agent-card.json" \
     2>/dev/null | { command -v jq >/dev/null 2>&1 && jq -r '.skills | length' || cat; } || echo "")
   if [[ "$skills" =~ ^[0-9]+$ ]]; then

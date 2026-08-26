@@ -6,6 +6,10 @@
 # SSH target. Docker and Compose v2 must be usable without sudo.
 SVPCHAIN_DEPLOY_HOST="www@svpdev1.example.com"
 
+# Optional SSH jump host (ssh -J) when the deploy host is not reachable from
+# this machine directly. Comma-separate to chain several hops.
+# SVPCHAIN_DEPLOY_JUMP_BOX="ops@bastion.example.com"
+
 # The chain endpoints as reached from the deploy host. The container uses host
 # networking, so 127.0.0.1 means the deploy host itself.
 SVPCHAIN_CHAIN_ID="svp-2517-1"
