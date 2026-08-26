@@ -16,6 +16,10 @@ const (
 	SkillAuth       = "svpchain-auth"
 	SkillFaucet     = "svpchain-faucet"
 	SkillEVM        = "svpchain-evm"
+
+	// SkillMeta is this agent describing itself — see meta.go. It is not an
+	// operation family; it needs no credential and no backing service.
+	SkillMeta = "svpchain-meta"
 )
 
 // NewEmpty returns a registry with nothing registered. A per-category binary
@@ -135,5 +139,6 @@ func New(h *tools.Handlers) *Registry {
 	r.RegisterAuth(h)
 	r.RegisterFaucet(h)
 	r.RegisterEVM(h)
+	r.RegisterMeta()
 	return r
 }

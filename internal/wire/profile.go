@@ -30,6 +30,9 @@ type Profile struct {
 func RegisterCallerSignedStack(r *toolbridge.Registry, h *tools.Handlers) {
 	r.RegisterAuth(h)
 	r.RegisterFaucet(h)
+	// Self-description, so an A2A caller can discover this profile's surface
+	// without an MCP connection to the same handlers.
+	r.RegisterMeta()
 }
 
 // EVMProfile serves caller-signed EVM DeFi: discovery, builds, and the raw

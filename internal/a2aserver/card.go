@@ -100,6 +100,19 @@ var skillMetas = []skillMeta{
 		tags: []string{"faucet", "testnet"},
 	},
 	{
+		id:   toolbridge.SkillMeta,
+		name: "SVP-Chain Agent Self-Description",
+		desc: "Discovery: list_tools returns every tool this agent serves, with the skill " +
+			"it belongs to and the JSON Schema of its arguments — the A2A equivalent of " +
+			"MCP's tools/list, which the A2A protocol itself does not provide. Needs no " +
+			"credential.",
+		tags: []string{"discovery", "schema", "read-only"},
+		examples: []string{
+			`{"skill":"svpchain-meta","tool":"list_tools"}`,
+			`{"skill":"svpchain-meta","tool":"list_tools","args":{"skill":"svpchain-evm"}}`,
+		},
+	},
+	{
 		id:   toolbridge.SkillEVM,
 		name: "SVP-Chain EVM",
 		desc: "EVM-side operations: broadcast raw txs and track status, quote and build " +

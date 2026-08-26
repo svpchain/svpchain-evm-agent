@@ -18,14 +18,14 @@ type echoOut struct {
 }
 
 func TestAdaptDecodesArgsAndReturnsOutput(t *testing.T) {
-	call := adapt(func(_ context.Context, req *mcp.CallToolRequest, in echoIn) (*mcp.CallToolResult, echoOut, error) {
+	bound := adapt(func(_ context.Context, req *mcp.CallToolRequest, in echoIn) (*mcp.CallToolResult, echoOut, error) {
 		if req != nil {
 			t.Fatal("adapter must pass a nil CallToolRequest")
 		}
 		return nil, echoOut{Echoed: in.Value}, nil
 	})
 
-	out, err := call(context.Background(), json.RawMessage(`{"value":"hi"}`))
+	out, err := bound.Call(context.Background(), json.RawMessage(`{"value":"hi"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,10 +35,10 @@ func TestAdaptDecodesArgsAndReturnsOutput(t *testing.T) {
 }
 
 func TestAdaptEmptyArgsYieldZeroInput(t *testing.T) {
-	call := adapt(func(_ context.Context, _ *mcp.CallToolRequest, in echoIn) (*mcp.CallToolResult, echoOut, error) {
+	bound := adapt(func(_ context.Context, _ *mcp.CallToolRequest, in echoIn) (*mcp.CallToolResult, echoOut, error) {
 		return nil, echoOut{Echoed: in.Value}, nil
 	})
-	out, err := call(context.Background(), nil)
+	out, err := bound.Call(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,14 +49,14 @@ func TestAdaptEmptyArgsYieldZeroInput(t *testing.T) {
 
 func TestAdaptReportsDecodeAndHandlerErrors(t *testing.T) {
 	boom := errors.New("handler refused")
-	call := adapt(func(_ context.Context, _ *mcp.CallToolRequest, _ echoIn) (*mcp.CallToolResult, echoOut, error) {
+	bound := adapt(func(_ context.Context, _ *mcp.CallToolRequest, _ echoIn) (*mcp.CallToolResult, echoOut, error) {
 		return nil, echoOut{}, boom
 	})
 
-	if _, err := call(context.Background(), json.RawMessage(`{nonsense`)); err == nil {
+	if _, err := bound.Call(context.Background(), json.RawMessage(`{nonsense`)); err == nil {
 		t.Error("malformed args must fail to decode")
 	}
-	if _, err := call(context.Background(), nil); !errors.Is(err, boom) {
+	if _, err := bound.Call(context.Background(), nil); !errors.Is(err, boom) {
 		t.Errorf("handler error must propagate, got %v", err)
 	}
 }
@@ -64,23 +64,23 @@ func TestAdaptReportsDecodeAndHandlerErrors(t *testing.T) {
 // A handler returning an IsError result (none do today) must not smuggle it
 // through as success.
 func TestAdaptTreatsIsErrorResultAsError(t *testing.T) {
-	call := adapt(func(_ context.Context, _ *mcp.CallToolRequest, _ echoIn) (*mcp.CallToolResult, echoOut, error) {
+	bound := adapt(func(_ context.Context, _ *mcp.CallToolRequest, _ echoIn) (*mcp.CallToolResult, echoOut, error) {
 		return &mcp.CallToolResult{
 			IsError: true,
 			Content: []mcp.Content{&mcp.TextContent{Text: "soft refusal"}},
 		}, echoOut{}, nil
 	})
-	_, err := call(context.Background(), nil)
+	_, err := bound.Call(context.Background(), nil)
 	if err == nil || err.Error() != "soft refusal" {
 		t.Errorf("IsError result must surface as the error text, got %v", err)
 	}
 }
 
 func TestAdaptNative(t *testing.T) {
-	call := adaptNative(func(_ context.Context, in echoIn) (echoOut, error) {
+	bound := adaptNative(func(_ context.Context, in echoIn) (echoOut, error) {
 		return echoOut{Echoed: in.Value}, nil
 	})
-	out, err := call(context.Background(), json.RawMessage(`{"value":"native"}`))
+	out, err := bound.Call(context.Background(), json.RawMessage(`{"value":"native"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,13 +101,13 @@ func TestAdaptStrictNativeRefusesUnknownTopLevelKeys(t *testing.T) {
 		Deposit depositParams `json:"deposit"`
 	}
 	called := false
-	call := adaptStrictNative(func(_ context.Context, in execIn) (uint32, error) {
+	bound := adaptStrictNative(func(_ context.Context, in execIn) (uint32, error) {
 		called = true
 		return in.Deposit.SubaccountNumber, nil
 	})
 
 	// Flat args — the read tools' shape — refuse and name the real keys.
-	_, err := call(context.Background(), json.RawMessage(`{"subaccount_number":1,"human_usdc":"10"}`))
+	_, err := bound.Call(context.Background(), json.RawMessage(`{"subaccount_number":1,"human_usdc":"10"}`))
 	if err == nil || !strings.Contains(err.Error(), "unknown args key") ||
 		!strings.Contains(err.Error(), `"deposit"`) {
 		t.Fatalf("flat args must refuse naming the wrapper key, got %v", err)
@@ -117,7 +117,7 @@ func TestAdaptStrictNativeRefusesUnknownTopLevelKeys(t *testing.T) {
 	}
 
 	// Properly nested args — with the metadata-injected proof key — pass.
-	out, err := call(context.Background(), json.RawMessage(`{"proof":["tok"],"deposit":{"subaccount_number":1}}`))
+	out, err := bound.Call(context.Background(), json.RawMessage(`{"proof":["tok"],"deposit":{"subaccount_number":1}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestAdaptStrictNativeRefusesUnknownTopLevelKeys(t *testing.T) {
 
 func TestRegistryRejectsDuplicatesAndUnknownLookups(t *testing.T) {
 	r := newRegistry()
-	r.add("skill-a", "tool-1", func(context.Context, json.RawMessage) (any, error) { return nil, nil })
+	r.add("skill-a", "tool-1", Bound{Call: func(context.Context, json.RawMessage) (any, error) { return nil, nil }})
 
 	if _, ok := r.Lookup("tool-1"); !ok {
 		t.Error("registered tool must resolve")
@@ -142,5 +142,5 @@ func TestRegistryRejectsDuplicatesAndUnknownLookups(t *testing.T) {
 			t.Error("duplicate registration must panic — it is a programming error")
 		}
 	}()
-	r.add("skill-b", "tool-1", func(context.Context, json.RawMessage) (any, error) { return nil, nil })
+	r.add("skill-b", "tool-1", Bound{Call: func(context.Context, json.RawMessage) (any, error) { return nil, nil }})
 }

@@ -28,6 +28,7 @@ func TestEVMProfileServesExactlyItsFamilies(t *testing.T) {
 		toolbridge.SkillEVM:    true,
 		toolbridge.SkillAuth:   true,
 		toolbridge.SkillFaucet: true,
+		toolbridge.SkillMeta:   true,
 	}
 	got := r.BySkill()
 	for skill := range want {
