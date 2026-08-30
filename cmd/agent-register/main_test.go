@@ -14,6 +14,34 @@ func TestSplitTags(t *testing.T) {
 	require.Nil(t, splitTags(" , "))
 }
 
+func TestParsePricing(t *testing.T) {
+	t.Run("complete price", func(t *testing.T) {
+		pricing, err := parsePricing(opts{
+			pricingAmount: "1000000",
+			pricingUnit:   "call",
+		})
+		require.NoError(t, err)
+		require.Equal(t, "1000000", pricing.Amount)
+		require.Equal(t, "call", pricing.Unit)
+	})
+
+	t.Run("all fields omitted preserves existing price", func(t *testing.T) {
+		pricing, err := parsePricing(opts{})
+		require.NoError(t, err)
+		require.Nil(t, pricing)
+	})
+
+	t.Run("blank unit is refused", func(t *testing.T) {
+		_, err := parsePricing(opts{pricingAmount: "1000000"})
+		require.ErrorContains(t, err, "pricing-unit")
+	})
+
+	t.Run("zero amount is refused", func(t *testing.T) {
+		_, err := parsePricing(opts{pricingAmount: "0", pricingUnit: "call"})
+		require.ErrorContains(t, err, "positive")
+	})
+}
+
 // The card advertises the interface URL the agent built from its own
 // public_url. If that disagrees with the endpoint being registered, the
 // registration would publish a URL whose card sends callers elsewhere.

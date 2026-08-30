@@ -49,6 +49,7 @@ import (
 
 	sdkmath "cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	agenttypes "github.com/dydxprotocol/v4-chain/protocol/x/agent/types"
 
 	"github.com/svpchain/svpchain-evm-agent/internal/agentchain"
 	"github.com/svpchain/svpchain-evm-agent/internal/config"
@@ -59,29 +60,35 @@ import (
 const cardPath = "/.well-known/agent-card.json"
 
 type opts struct {
-	url          string
-	chainID      string
-	grpcAddr     string
-	keyFile      string
-	bond         string
-	capabilities string
-	metadata     string
-	feeDenom     string
-	feeAmount    string
-	gasLimit     uint64
-	dryRun       bool
-	timeout      time.Duration
+	url           string
+	cardURL       string
+	chainID       string
+	grpcAddr      string
+	keyFile       string
+	bond          string
+	capabilities  string
+	metadata      string
+	pricingAmount string
+	pricingUnit   string
+	feeDenom      string
+	feeAmount     string
+	gasLimit      uint64
+	dryRun        bool
+	timeout       time.Duration
 }
 
 func main() {
 	var o opts
-	flag.StringVar(&o.url, "url", "", "base URL of the running agent; registered as its endpoint and where the card is fetched")
+	flag.StringVar(&o.url, "url", "", "public base URL of the running agent, registered as its endpoint")
+	flag.StringVar(&o.cardURL, "card-url", "", "base URL used to fetch the agent card; defaults to -url and may be a local reachability URL")
 	flag.StringVar(&o.chainID, "chain-id", "", "chain id of the chain carrying x/agent")
 	flag.StringVar(&o.grpcAddr, "grpc", "", "gRPC address of that chain")
 	flag.StringVar(&o.keyFile, "key-file", "", "owner key file, when "+owner.KeyEnvVar+" is not set")
 	flag.StringVar(&o.bond, "bond", "", "initial bond as a coin, e.g. 5000000000000000000000asvp; empty takes the module's MinBond")
 	flag.StringVar(&o.capabilities, "capabilities", "", "comma-separated capability tags for discovery; at least one is required")
 	flag.StringVar(&o.metadata, "metadata", "", "opaque owner metadata; empty leaves an existing value alone")
+	flag.StringVar(&o.pricingAmount, "pricing-amount", "", "advertised price in the network settlement token's base units; requires -pricing-unit")
+	flag.StringVar(&o.pricingUnit, "pricing-unit", "call", "advertised price unit, such as call; requires -pricing-amount")
 	flag.StringVar(&o.feeDenom, "fee-denom", config.DefaultFeeDenom, "fee denom")
 	flag.StringVar(&o.feeAmount, "fee-amount", config.DefaultFeeAmount, "fee amount")
 	flag.Uint64Var(&o.gasLimit, "gas-limit", config.DefaultFeeGasLimit, "gas limit")
@@ -106,6 +113,10 @@ func run(ctx context.Context, o opts, w io.Writer) error {
 	if o.chainID == "" || o.grpcAddr == "" {
 		return fmt.Errorf("-chain-id and -grpc are required: they name the chain carrying x/agent")
 	}
+	cardBaseURL := strings.TrimSuffix(strings.TrimSpace(o.cardURL), "/")
+	if cardBaseURL == "" {
+		cardBaseURL = baseURL
+	}
 	tags := splitTags(o.capabilities)
 	if len(tags) == 0 {
 		return fmt.Errorf("-capabilities is required: an agent advertising none appears in no capability index and the chain refuses it")
@@ -128,7 +139,7 @@ func run(ctx context.Context, o opts, w io.Writer) error {
 	// What a verifier does later, done here first: fetch the card and hash the
 	// exact bytes served. A proxy rewriting the body, or a stale process behind
 	// the URL, is caught before it becomes an on-chain claim nobody can verify.
-	cardBytes, err := fetchCard(ctx, baseURL)
+	cardBytes, err := fetchCard(ctx, cardBaseURL)
 	if err != nil {
 		return err
 	}
@@ -137,11 +148,16 @@ func run(ctx context.Context, o opts, w io.Writer) error {
 		return err
 	}
 
+	pricing, err := parsePricing(o)
+	if err != nil {
+		return err
+	}
 	want := agentchain.Desired{
 		Endpoint:       baseURL,
 		CapabilityHash: cardHash[:],
 		Capabilities:   tags,
 		Metadata:       o.metadata,
+		Pricing:        pricing,
 	}
 
 	client, err := agentchain.Dial(ctx, o.grpcAddr)
@@ -161,6 +177,9 @@ func run(ctx context.Context, o opts, w io.Writer) error {
 	var bond sdk.Coin
 	switch {
 	case !found:
+		if pricing == nil {
+			return fmt.Errorf("first registration requires -pricing-amount")
+		}
 		bond, err = resolveBond(ctx, client, o.bond)
 		if err != nil {
 			return err
@@ -191,6 +210,9 @@ func run(ctx context.Context, o opts, w io.Writer) error {
 	fmt.Fprintf(w, "  endpoint %s\n", baseURL)
 	fmt.Fprintf(w, "  card     sha256 %x\n", cardHash)
 	fmt.Fprintf(w, "  tags     %s\n", strings.Join(tags, ","))
+	if pricing != nil {
+		fmt.Fprintf(w, "  pricing  %s / %s\n", pricing.Amount, pricing.Unit)
+	}
 
 	// ValidateBasic here rather than at the mempool: the same checks run
 	// chain-side, and failing locally names the field instead of returning a
@@ -226,6 +248,25 @@ func run(ctx context.Context, o opts, w io.Writer) error {
 	}
 	fmt.Fprintf(w, "%s submitted — tx %s\n", action, res.TxHash)
 	return nil
+}
+
+func parsePricing(o opts) (*agenttypes.Pricing, error) {
+	amountText := strings.TrimSpace(o.pricingAmount)
+	unit := strings.TrimSpace(o.pricingUnit)
+	if amountText == "" {
+		return nil, nil
+	}
+	if unit == "" {
+		return nil, fmt.Errorf("-pricing-unit is required with -pricing-amount")
+	}
+	amount, ok := sdkmath.NewIntFromString(amountText)
+	if !ok || !amount.IsPositive() || amount.BigInt().BitLen() > 256 {
+		return nil, fmt.Errorf("-pricing-amount must be a positive uint256 base-10 integer")
+	}
+	return &agenttypes.Pricing{
+		Amount: amount.String(),
+		Unit:   unit,
+	}, nil
 }
 
 // resolveBond takes the operator's coin, or asks the module for its minimum.

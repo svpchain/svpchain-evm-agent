@@ -59,6 +59,11 @@ SVPCHAIN_EVM_AGENT_PUBLIC_URL="https://evm-agent.svpchain.org"
 #   SVPCHAIN_EVM_AGENT_OWNER_KEY="$(op read op://vault/svpchain-evm-agent/owner-key)"
 #SVPCHAIN_EVM_AGENT_OWNER_KEY=""
 
+# The network AgentSettlement deployment selects its paymentToken (USDV in
+# the current local PoC). x/agent stores only this advertised amount.
+#SVPCHAIN_AGENT_PRICING_AMOUNT="1000000"
+#SVPCHAIN_AGENT_PRICING_UNIT="call"
+
 # gRPC endpoint reachable from THIS machine, used only by --register.
 # SVPCHAIN_GRPC_ADDR above is the address the deployed container dials, which
 # on a normal deployment is meaningful only on the remote host.

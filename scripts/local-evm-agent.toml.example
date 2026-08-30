@@ -1,0 +1,54 @@
+# Complete local agent configuration for scripts/local-evm-agent.sh.
+#
+# Copy this file to local-evm-agent.toml in the repository root, then
+# replace the placeholders with the addresses emitted by your local deployment.
+# The file is intentionally ignored by Git because local contracts are reset or
+# redeployed frequently. Use --config-file or EVM_AGENT_LOCAL_CONFIG_FILE to
+# keep it elsewhere.
+#
+# The launcher copies this file to build/local-evm-agent/agent.toml. Change
+# the RPC endpoints here when your local chain uses non-default ports.
+
+listen_addr = "127.0.0.1:8083"
+# For a Docker consumer on macOS, use http://host.docker.internal:8083.
+public_url  = "http://localhost:8083"
+
+# Optional faucet backend. This root key must appear before all TOML tables.
+#faucet_base_url = "http://127.0.0.1:8088"
+
+[dex_chain]
+id               = "svp-2517-1"
+grpc_addr        = "127.0.0.1:9090"
+comet_rpc_url    = "http://127.0.0.1:26657"
+indexer_base_url = "http://127.0.0.1:3002"
+evm_rpc_url      = "http://127.0.0.1:8545"
+
+# Optional Uniswap V2 deployment. router and wsvp are required together;
+# factory enables list_swap_pairs and dynamic token discovery.
+#[evm.swap]
+#uniswap_router_addr = "0x..."
+#wsvp_addr           = "0x..."
+#factory_addr        = "0x..."
+
+# Stable ERC-20 aliases. These are convenience names, not an allowlist.
+# [[evm.asset]]
+# id       = "usdc"
+# address  = "0x..."
+# decimals = 6
+
+# Optional price feed.
+#[evm.oracle]
+#feed_addr = "0x..."
+
+# Optional bridge. All fields are required together; routes_path is resolved
+# relative to the generated build/local-evm-agent/agent.toml, so use an
+# absolute path for a routes file stored outside that directory.
+#[evm.bridge]
+#addr            = "0x..."
+#routes_path     = "/absolute/path/to/routes.json"
+#source_chain_id = 1234
+
+# [[evm.bridge.foreign_chain]]
+# chain_id    = 421614
+# rpc_url     = "http://127.0.0.1:8546"
+# bridge_addr = "0x..."

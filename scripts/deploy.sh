@@ -87,6 +87,10 @@
 #   --operator-capabilities <csv>  Default "evm.swap,evm.bridge,evm.tokens".
 #                                  SVPCHAIN_OPERATOR_CAPABILITIES
 #   --operator-metadata <text>     SVPCHAIN_OPERATOR_METADATA
+#   --pricing-amount <base units>   --register only. paymentToken amount.
+#                                  SVPCHAIN_AGENT_PRICING_AMOUNT
+#   --pricing-unit <unit>           --register only. e.g. "call".
+#                                  SVPCHAIN_AGENT_PRICING_UNIT
 #
 # The EVM surface (this agent's whole point):
 #   --evm-rpc <url>                The chain's EVM JSON-RPC. Required to boot.
@@ -248,6 +252,7 @@ readonly CONFIG_VARS=(
   SVPCHAIN_COMET_RPC SVPCHAIN_INDEXER SVPCHAIN_AGENT_CHAIN_ID SVPCHAIN_AGENT_CHAIN_REST
   SVPCHAIN_EVM_AGENT_PUBLIC_URL SVPCHAIN_EVM_AGENT_OWNER_KEY SVPCHAIN_REGISTER_GRPC
   SVPCHAIN_OPERATOR_CAPABILITIES SVPCHAIN_OPERATOR_METADATA SVPCHAIN_INSTALL_DIR
+  SVPCHAIN_AGENT_PRICING_AMOUNT SVPCHAIN_AGENT_PRICING_UNIT
   SVPCHAIN_EVM_RPC SVPCHAIN_EVM_UNISWAP_ROUTER SVPCHAIN_EVM_WSVP
   SVPCHAIN_EVM_ORACLE SVPCHAIN_EVM_BRIDGE SVPCHAIN_EVM_BRIDGE_ROUTES
   SVPCHAIN_EVM_BRIDGE_ROUTES_SRC SVPCHAIN_EVM_BRIDGE_SOURCE_CHAIN_ID
@@ -328,6 +333,8 @@ public_url="${SVPCHAIN_EVM_AGENT_PUBLIC_URL:-https://agent-testnet.svpchain.org}
 owner_key="${SVPCHAIN_EVM_AGENT_OWNER_KEY:-}"
 operator_capabilities="${SVPCHAIN_OPERATOR_CAPABILITIES:-evm.swap,evm.bridge,evm.tokens}"
 operator_metadata="${SVPCHAIN_OPERATOR_METADATA:-}"
+pricing_amount="${SVPCHAIN_AGENT_PRICING_AMOUNT:-}"
+pricing_unit="${SVPCHAIN_AGENT_PRICING_UNIT:-}"
 evm_rpc="${SVPCHAIN_EVM_RPC:-http://127.0.0.1:8545}"
 evm_uniswap_router="${SVPCHAIN_EVM_UNISWAP_ROUTER:-0xFe7bf2DFd5CB268C6779f1F614638a436Cb701e4}"
 evm_wsvp="${SVPCHAIN_EVM_WSVP:-0x771a0a63D8198b7dbea4a16910ff68AB38006531}"
@@ -375,6 +382,8 @@ while [[ $# -gt 0 ]]; do
     --public-url)             public_url="$2"; mark_flag SVPCHAIN_EVM_AGENT_PUBLIC_URL;  shift 2 ;;
     --operator-capabilities)  operator_capabilities="$2"; mark_flag SVPCHAIN_OPERATOR_CAPABILITIES; shift 2 ;;
     --operator-metadata)      operator_metadata="$2"; mark_flag SVPCHAIN_OPERATOR_METADATA; shift 2 ;;
+    --pricing-amount)         pricing_amount="$2"; mark_flag SVPCHAIN_AGENT_PRICING_AMOUNT; shift 2 ;;
+    --pricing-unit)           pricing_unit="$2"; mark_flag SVPCHAIN_AGENT_PRICING_UNIT; shift 2 ;;
     --evm-rpc)                evm_rpc="$2"; mark_flag SVPCHAIN_EVM_RPC;           shift 2 ;;
     --evm-uniswap-router)     evm_uniswap_router="$2"; mark_flag SVPCHAIN_EVM_UNISWAP_ROUTER; shift 2 ;;
     --evm-wsvp)               evm_wsvp="$2"; mark_flag SVPCHAIN_EVM_WSVP;          shift 2 ;;
@@ -1020,6 +1029,8 @@ if [[ "$mode" == "register" ]]; then
     )
     if [[ -n "$register_bond" ]]; then    args+=(-bond "$register_bond");        fi
     if [[ -n "$operator_metadata" ]]; then args+=(-metadata "$operator_metadata"); fi
+    if [[ -n "$pricing_amount" ]]; then args+=(-pricing-amount "$pricing_amount"); fi
+    if [[ -n "$pricing_unit" ]]; then args+=(-pricing-unit "$pricing_unit"); fi
     if [[ "$dry_run" == "1" ]]; then       args+=(-dry-run);                      fi
     GOWORK=off go run ./cmd/agent-register "${args[@]}"
   ) || fail "registration failed"
@@ -1044,7 +1055,8 @@ if [[ "$mode" == "print-env" ]]; then
     SVPCHAIN_COMET_RPC SVPCHAIN_INDEXER SVPCHAIN_AGENT_CHAIN_ID
     SVPCHAIN_AGENT_CHAIN_REST SVPCHAIN_EVM_AGENT_PUBLIC_URL
     SVPCHAIN_EVM_AGENT_OWNER_KEY SVPCHAIN_REGISTER_GRPC SVPCHAIN_OPERATOR_CAPABILITIES
-    SVPCHAIN_OPERATOR_METADATA SVPCHAIN_EVM_RPC SVPCHAIN_EVM_UNISWAP_ROUTER
+    SVPCHAIN_OPERATOR_METADATA SVPCHAIN_AGENT_PRICING_AMOUNT
+    SVPCHAIN_AGENT_PRICING_UNIT SVPCHAIN_EVM_RPC SVPCHAIN_EVM_UNISWAP_ROUTER
     SVPCHAIN_EVM_WSVP SVPCHAIN_EVM_UNISWAP_FACTORY SVPCHAIN_EVM_ORACLE SVPCHAIN_EVM_BRIDGE
     SVPCHAIN_EVM_BRIDGE_ROUTES SVPCHAIN_EVM_BRIDGE_ROUTES_SRC
     SVPCHAIN_EVM_BRIDGE_SOURCE_CHAIN_ID SVPCHAIN_EVM_FOREIGN_CHAINS
@@ -1058,7 +1070,8 @@ if [[ "$mode" == "print-env" ]]; then
     "$comet_rpc" "$indexer" "$agent_chain_id"
     "$agent_chain_rest" "$public_url"
     "$owner_key" "$register_grpc" "$operator_capabilities"
-    "$operator_metadata" "$evm_rpc" "$evm_uniswap_router"
+    "$operator_metadata" "$pricing_amount"
+    "$pricing_unit" "$evm_rpc" "$evm_uniswap_router"
     "$evm_wsvp" "$evm_uniswap_factory" "$evm_oracle" "$evm_bridge_addr"
     "$evm_bridge_routes" "$evm_bridge_routes_src"
     "$evm_bridge_source_chain_id" "$evm_foreign_chains"
@@ -1322,4 +1335,3 @@ step "Done — $AGENT_NAME $image_tag running on $host (:${AGENT_PORT}, advertis
 # matches its registration reads as unverified with every process healthy.
 info "If the card or the public URL changed, publish it:"
 info "  ./scripts/deploy.sh --register    (also does the first registration)"
-

@@ -51,9 +51,52 @@ liveness endpoint.
 ./scripts/local-evm-agent.sh start
 ```
 
-The script starts the local chain when needed and builds the EVM agent. No
-`operator.key`, delegation, agent-wallet budget, or registration step is
-required. Use `stop`, `status`, `logs`, and `config` to inspect the service.
+The script starts the local chain when needed and builds the EVM agent. Use
+`stop`, `status`, `logs`, and `config` to inspect the service.
+
+The local configuration is the complete source for the generated `agent.toml`,
+including chain endpoints and EVM feature bindings:
+
+```sh
+cp scripts/local-evm-agent.toml.example local-evm-agent.toml
+# Fill in the addresses from the local EVM deployment.
+./scripts/local-evm-agent.sh config
+```
+
+`local-evm-agent.toml` contains `listen_addr`, `public_url`, `[dex_chain]`,
+and optional `faucet_base_url`, `[evm.swap]`, `[[evm.asset]]`, `[evm.oracle]`,
+and `[evm.bridge]` sections. Pass `--config-file PATH` or set
+`EVM_AGENT_LOCAL_CONFIG_FILE` for a different full configuration file.
+Existing ignored `contracts.toml` files are used as a compatibility fallback
+until the new file is created; remove obsolete `[[evm.contract]]` entries when
+migrating because the current agent ignores them.
+
+When a local Docker service consumes the agent, use
+`http://host.docker.internal:8083` as `public_url`, not `localhost`. The local
+launcher fetches the Card through `127.0.0.1` while registering that public
+endpoint, so the Card's interface URL and the on-chain capability hash remain
+consistent.
+
+To exercise the current caller-signed registry flow against the local chain,
+create a local owner key, validate the registration, then register. The
+initial registration price defaults to `1000000` base units per `call`; use
+`--dry-run` to validate without a broadcast.
+
+```sh
+./scripts/local-evm-agent.sh gen-owner-key
+./scripts/local-evm-agent.sh register --dry-run
+./scripts/local-evm-agent.sh register
+```
+
+The key is stored at `build/local-evm-agent/owner.key` with mode `0600`. Set
+`EVM_AGENT_LOCAL_OWNER_KEY_FILE` to use a different local identity, or set
+`SVPCHAIN_EVM_AGENT_OWNER_KEY` for a single registration invocation.
+
+For a real local registration, the launcher preflights the registration and
+automatically tops the owner up from the local chain's `localval` account to
+`20` SVP when needed. Override `EVM_AGENT_LOCAL_FUNDER_KEY`,
+`EVM_AGENT_LOCAL_OWNER_MIN_BALANCE`, or `EVM_AGENT_LOCAL_FUND_FEE` for a
+different local fixture. `register --dry-run` never transfers funds.
 
 ## Deployment
 

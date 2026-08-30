@@ -13,3 +13,5 @@
 
 # Local EVM contract directory. Keep deployment-specific addresses local.
 /contracts.toml
+/local-evm-agent.toml
+/local-evm-agent-routes.json
