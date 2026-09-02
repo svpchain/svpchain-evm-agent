@@ -64,6 +64,7 @@ type opts struct {
 	cardURL       string
 	chainID       string
 	grpcAddr      string
+	rpcURL        string
 	keyFile       string
 	bond          string
 	capabilities  string
@@ -83,6 +84,7 @@ func main() {
 	flag.StringVar(&o.cardURL, "card-url", "", "base URL used to fetch the agent card; defaults to -url and may be a local reachability URL")
 	flag.StringVar(&o.chainID, "chain-id", "", "chain id of the chain carrying x/agent")
 	flag.StringVar(&o.grpcAddr, "grpc", "", "gRPC address of that chain")
+	flag.StringVar(&o.rpcURL, "rpc", "", "CometBFT RPC URL of that chain; uses ABCI queries and broadcast_tx_sync")
 	flag.StringVar(&o.keyFile, "key-file", "", "owner key file, when "+owner.KeyEnvVar+" is not set")
 	flag.StringVar(&o.bond, "bond", "", "initial bond as a coin, e.g. 5000000000000000000000asvp; empty takes the module's MinBond")
 	flag.StringVar(&o.capabilities, "capabilities", "", "comma-separated capability tags for discovery; at least one is required")
@@ -110,8 +112,11 @@ func run(ctx context.Context, o opts, w io.Writer) error {
 	if baseURL == "" {
 		return fmt.Errorf("-url is required: the agent has to be running and reachable to register itself")
 	}
-	if o.chainID == "" || o.grpcAddr == "" {
-		return fmt.Errorf("-chain-id and -grpc are required: they name the chain carrying x/agent")
+	if o.chainID == "" || (o.grpcAddr == "" && o.rpcURL == "") {
+		return fmt.Errorf("-chain-id and one of -grpc or -rpc are required: they name the chain carrying x/agent")
+	}
+	if o.grpcAddr != "" && o.rpcURL != "" {
+		return fmt.Errorf("-grpc and -rpc are mutually exclusive")
 	}
 	cardBaseURL := strings.TrimSuffix(strings.TrimSpace(o.cardURL), "/")
 	if cardBaseURL == "" {
@@ -160,9 +165,14 @@ func run(ctx context.Context, o opts, w io.Writer) error {
 		Pricing:        pricing,
 	}
 
-	client, err := agentchain.Dial(ctx, o.grpcAddr)
+	var client *agentchain.Client
+	if o.rpcURL != "" {
+		client, err = agentchain.DialRPC(ctx, o.rpcURL)
+	} else {
+		client, err = agentchain.Dial(ctx, o.grpcAddr)
+	}
 	if err != nil {
-		return err
+		return fmt.Errorf("dial chain: %w", err)
 	}
 	defer client.Close()
 

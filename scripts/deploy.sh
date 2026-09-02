@@ -101,6 +101,10 @@
 #                                  SVPCHAIN_EVM_WSVP
 #   --evm-uniswap-factory <addr>   Optional Uniswap V2 Factory for live Pair
 #                                  discovery. SVPCHAIN_EVM_UNISWAP_FACTORY
+#   --evm-assets <assets>          Stable ERC-20 aliases, formatted as
+#                                  id,address,decimals;... . These are
+#                                  returned by list_evm_assets.
+#                                  SVPCHAIN_EVM_ASSETS
 #   --evm-oracle <addr>            Price feed for get_oracle_price.
 #                                  SVPCHAIN_EVM_ORACLE
 #   --evm-bridge-addr <addr>       SVPBridge on this chain. Needs the routes
@@ -156,6 +160,11 @@
 #                                  THIS machine. --grpc-addr is the container's
 #                                  view and usually is not.
 #                                  SVPCHAIN_REGISTER_GRPC
+#   --register-rpc <url>           --register only. Public CometBFT RPC URL
+#                                  reachable from THIS machine. Uses ABCI
+#                                  queries and broadcast_tx_sync, avoiding an
+#                                  SSH tunnel when gRPC is private.
+#                                  SVPCHAIN_REGISTER_RPC
 #   --bond <coin>                  --register only. Initial bond, e.g.
 #                                  5000000000000000000000asvp. Default: the
 #                                  module's MinBond.
@@ -250,11 +259,12 @@ unset _i _j
 readonly CONFIG_VARS=(
   SVPCHAIN_DEPLOY_HOST SVPCHAIN_DEPLOY_JUMP_BOX SVPCHAIN_CHAIN_ID SVPCHAIN_GRPC_ADDR
   SVPCHAIN_COMET_RPC SVPCHAIN_INDEXER SVPCHAIN_AGENT_CHAIN_ID SVPCHAIN_AGENT_CHAIN_REST
-  SVPCHAIN_EVM_AGENT_PUBLIC_URL SVPCHAIN_EVM_AGENT_OWNER_KEY SVPCHAIN_REGISTER_GRPC
+  SVPCHAIN_EVM_AGENT_PUBLIC_URL SVPCHAIN_EVM_AGENT_OWNER_KEY SVPCHAIN_REGISTER_GRPC SVPCHAIN_REGISTER_RPC
   SVPCHAIN_OPERATOR_CAPABILITIES SVPCHAIN_OPERATOR_METADATA SVPCHAIN_INSTALL_DIR
   SVPCHAIN_AGENT_PRICING_AMOUNT SVPCHAIN_AGENT_PRICING_UNIT
   SVPCHAIN_EVM_RPC SVPCHAIN_EVM_UNISWAP_ROUTER SVPCHAIN_EVM_WSVP
-  SVPCHAIN_EVM_ORACLE SVPCHAIN_EVM_BRIDGE SVPCHAIN_EVM_BRIDGE_ROUTES
+  SVPCHAIN_EVM_UNISWAP_FACTORY SVPCHAIN_EVM_ASSETS SVPCHAIN_EVM_ORACLE
+  SVPCHAIN_EVM_BRIDGE SVPCHAIN_EVM_BRIDGE_ROUTES
   SVPCHAIN_EVM_BRIDGE_ROUTES_SRC SVPCHAIN_EVM_BRIDGE_SOURCE_CHAIN_ID
   SVPCHAIN_EVM_FOREIGN_CHAINS SVPCHAIN_FAUCET_URL SVPCHAIN_MARKETS_REFRESH
   SVPCHAIN_DEPOSIT_MAX_USDC SVPCHAIN_WITHDRAW_MAX_USDC
@@ -339,13 +349,16 @@ evm_rpc="${SVPCHAIN_EVM_RPC:-http://127.0.0.1:8545}"
 evm_uniswap_router="${SVPCHAIN_EVM_UNISWAP_ROUTER:-0xFe7bf2DFd5CB268C6779f1F614638a436Cb701e4}"
 evm_wsvp="${SVPCHAIN_EVM_WSVP:-0x771a0a63D8198b7dbea4a16910ff68AB38006531}"
 evm_uniswap_factory="${SVPCHAIN_EVM_UNISWAP_FACTORY:-0xd0Dd57B4a87dfdFC427FA3f71251D2427B6A1ac7}"
+evm_assets="${SVPCHAIN_EVM_ASSETS:-}"
 evm_oracle="${SVPCHAIN_EVM_ORACLE:-0xAE351F2dF66DF1A7d2eB0D7574BcDb909E680B56}"
 evm_bridge_addr="${SVPCHAIN_EVM_BRIDGE:-0x78Aca10afd5b28E838ECf0De20c5621CE39D9F4a}"
 evm_bridge_routes="${SVPCHAIN_EVM_BRIDGE_ROUTES:-routes.json}"
 evm_bridge_routes_src="${SVPCHAIN_EVM_BRIDGE_ROUTES_SRC:-}"
 evm_bridge_source_chain_id="${SVPCHAIN_EVM_BRIDGE_SOURCE_CHAIN_ID:-2517}"
 evm_foreign_chains="${SVPCHAIN_EVM_FOREIGN_CHAINS:-421614,https://sepolia-rollup.arbitrum.io/rpc,0xB6c74A758E3fA7bf57c22037821f7cA974d0CdfD;11155111,https://ethereum-sepolia-rpc.publicnode.com,0xb9a9937006E886F0Ec145a19634426300dD20a64}"
-faucet_url="${SVPCHAIN_FAUCET_URL:-https://pre-faucet.svpchain.org}"
+# An explicitly empty config value disables faucet support. Use '-' rather
+# than ':-' so an operator can opt out without an override flag.
+faucet_url="${SVPCHAIN_FAUCET_URL-https://pre-faucet.svpchain.org}"
 install_dir="${SVPCHAIN_INSTALL_DIR:-~/svpchain-evm-agent}"
 image_tag=""
 platform="linux/amd64"
@@ -368,6 +381,7 @@ register_bond=""
 # an ssh tunnel. Defaults to $grpc_addr, which is right for a local dev chain
 # and wrong for most else.
 register_grpc="${SVPCHAIN_REGISTER_GRPC:-}"
+register_rpc="${SVPCHAIN_REGISTER_RPC:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -388,6 +402,7 @@ while [[ $# -gt 0 ]]; do
     --evm-uniswap-router)     evm_uniswap_router="$2"; mark_flag SVPCHAIN_EVM_UNISWAP_ROUTER; shift 2 ;;
     --evm-wsvp)               evm_wsvp="$2"; mark_flag SVPCHAIN_EVM_WSVP;          shift 2 ;;
     --evm-uniswap-factory)    evm_uniswap_factory="$2"; mark_flag SVPCHAIN_EVM_UNISWAP_FACTORY; shift 2 ;;
+    --evm-assets)             evm_assets="$2"; mark_flag SVPCHAIN_EVM_ASSETS;      shift 2 ;;
     --evm-oracle)             evm_oracle="$2"; mark_flag SVPCHAIN_EVM_ORACLE;        shift 2 ;;
     --evm-bridge-addr)        evm_bridge_addr="$2"; mark_flag SVPCHAIN_EVM_BRIDGE;   shift 2 ;;
     --evm-bridge-routes)      evm_bridge_routes="$2"; mark_flag SVPCHAIN_EVM_BRIDGE_ROUTES; shift 2 ;;
@@ -413,6 +428,7 @@ while [[ $# -gt 0 ]]; do
     --register)               mode="register";        shift ;;
     --bond)                   register_bond="$2";     shift 2 ;;
     --register-grpc)          register_grpc="$2"; mark_flag SVPCHAIN_REGISTER_GRPC; shift 2 ;;
+    --register-rpc)           register_rpc="$2"; mark_flag SVPCHAIN_REGISTER_RPC; shift 2 ;;
     --print-env)              mode="print-env";       shift ;;
     --skip-build)             skip_build="1";         shift ;;
     --print-config)           mode="print-config";    shift ;;
@@ -582,6 +598,24 @@ EOF
     echo "uniswap_router_addr = \"${evm_uniswap_router}\""
     echo "wsvp_addr           = \"${evm_wsvp}\""
     [[ -z "$evm_uniswap_factory" ]] || echo "factory_addr        = \"${evm_uniswap_factory}\""
+  fi
+  if [[ -n "$evm_assets" ]]; then
+    local saved_ifs="$IFS" spec id address decimals extra
+    IFS=';'
+    for spec in $evm_assets; do
+      [[ -n "$spec" ]] || continue
+      IFS=',' read -r id address decimals extra <<< "$spec"
+      if [[ -z "$id" || -z "$address" || -z "$decimals" || -n "$extra" || ! "$id" =~ ^[A-Za-z0-9._-]+$ || ! "$address" =~ ^0x[0-9A-Fa-f]{40}$ || ! "$decimals" =~ ^[0-9]+$ ]]; then
+        IFS="$saved_ifs"
+        fail "invalid EVM asset; expected id,0x-address,decimals"
+      fi
+      echo ""
+      echo "[[evm.asset]]"
+      echo "id       = \"${id}\""
+      echo "address  = \"${address}\""
+      echo "decimals = ${decimals}"
+    done
+    IFS="$saved_ifs"
   fi
   if [[ -n "$evm_oracle" ]]; then
     echo ""
@@ -1007,11 +1041,13 @@ if [[ "$mode" == "register" ]]; then
   [[ -n "$owner_key" ]] \
     || fail "no owner key configured — registration is the owner proving it holds the key this agent is registered under (see --gen-owner-key)"
   [[ -n "$chain_id" ]] || fail "--chain-id is required to register: it names the chain carrying x/agent"
+  if [[ -n "$register_rpc" && -n "$register_grpc" ]]; then
+    fail "--register-rpc and --register-grpc are mutually exclusive"
+  fi
   # Falls back to the container's endpoint, which is right only when the chain
   # is reachable at the same address from here — a local dev node, typically.
   register_grpc="${register_grpc:-$grpc_addr}"
-  [[ -n "$register_grpc" ]] \
-    || fail "no gRPC endpoint to register through — set --register-grpc (--grpc-addr is the container's view of the chain, not necessarily reachable from here)"
+  if [[ -n "$register_rpc" ]]; then register_grpc=""; fi
 
   repo_dir="$(cd "${SCRIPT_DIR}/.." && pwd)"
   step "Registering ${AGENT_NAME} at ${public_url}"
@@ -1024,9 +1060,9 @@ if [[ "$mode" == "register" ]]; then
     args=(
       -url "$public_url"
       -chain-id "$chain_id"
-      -grpc "$register_grpc"
       -capabilities "$operator_capabilities"
     )
+    if [[ -n "$register_rpc" ]]; then args+=(-rpc "$register_rpc"); else args+=(-grpc "$register_grpc"); fi
     if [[ -n "$register_bond" ]]; then    args+=(-bond "$register_bond");        fi
     if [[ -n "$operator_metadata" ]]; then args+=(-metadata "$operator_metadata"); fi
     if [[ -n "$pricing_amount" ]]; then args+=(-pricing-amount "$pricing_amount"); fi
@@ -1054,10 +1090,10 @@ if [[ "$mode" == "print-env" ]]; then
     SVPCHAIN_CONFIG_DIR SVPCHAIN_DEPLOY_HOST SVPCHAIN_DEPLOY_JUMP_BOX SVPCHAIN_CHAIN_ID SVPCHAIN_GRPC_ADDR
     SVPCHAIN_COMET_RPC SVPCHAIN_INDEXER SVPCHAIN_AGENT_CHAIN_ID
     SVPCHAIN_AGENT_CHAIN_REST SVPCHAIN_EVM_AGENT_PUBLIC_URL
-    SVPCHAIN_EVM_AGENT_OWNER_KEY SVPCHAIN_REGISTER_GRPC SVPCHAIN_OPERATOR_CAPABILITIES
+    SVPCHAIN_EVM_AGENT_OWNER_KEY SVPCHAIN_REGISTER_GRPC SVPCHAIN_REGISTER_RPC SVPCHAIN_OPERATOR_CAPABILITIES
     SVPCHAIN_OPERATOR_METADATA SVPCHAIN_AGENT_PRICING_AMOUNT
     SVPCHAIN_AGENT_PRICING_UNIT SVPCHAIN_EVM_RPC SVPCHAIN_EVM_UNISWAP_ROUTER
-    SVPCHAIN_EVM_WSVP SVPCHAIN_EVM_UNISWAP_FACTORY SVPCHAIN_EVM_ORACLE SVPCHAIN_EVM_BRIDGE
+    SVPCHAIN_EVM_WSVP SVPCHAIN_EVM_UNISWAP_FACTORY SVPCHAIN_EVM_ASSETS SVPCHAIN_EVM_ORACLE SVPCHAIN_EVM_BRIDGE
     SVPCHAIN_EVM_BRIDGE_ROUTES SVPCHAIN_EVM_BRIDGE_ROUTES_SRC
     SVPCHAIN_EVM_BRIDGE_SOURCE_CHAIN_ID SVPCHAIN_EVM_FOREIGN_CHAINS
     SVPCHAIN_FAUCET_URL SVPCHAIN_MARKETS_REFRESH
@@ -1069,10 +1105,10 @@ if [[ "$mode" == "print-env" ]]; then
     "$config_dir" "$host" "$jump_box" "$chain_id" "$grpc_addr"
     "$comet_rpc" "$indexer" "$agent_chain_id"
     "$agent_chain_rest" "$public_url"
-    "$owner_key" "$register_grpc" "$operator_capabilities"
+    "$owner_key" "$register_grpc" "$register_rpc" "$operator_capabilities"
     "$operator_metadata" "$pricing_amount"
     "$pricing_unit" "$evm_rpc" "$evm_uniswap_router"
-    "$evm_wsvp" "$evm_uniswap_factory" "$evm_oracle" "$evm_bridge_addr"
+    "$evm_wsvp" "$evm_uniswap_factory" "$evm_assets" "$evm_oracle" "$evm_bridge_addr"
     "$evm_bridge_routes" "$evm_bridge_routes_src"
     "$evm_bridge_source_chain_id" "$evm_foreign_chains"
     "$faucet_url" "$markets_refresh"

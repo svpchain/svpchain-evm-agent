@@ -25,6 +25,8 @@ SVPCHAIN_EVM_AGENT_PUBLIC_URL="https://evm-agent.svpchain.org"
 #SVPCHAIN_EVM_UNISWAP_ROUTER="0x..."
 #SVPCHAIN_EVM_WSVP="0x..."
 #SVPCHAIN_EVM_UNISWAP_FACTORY="0x..."
+# Stable ERC-20 aliases returned by list_evm_assets: id,address,decimals;...
+#SVPCHAIN_EVM_ASSETS="usdc,0x0000000000000000000000000000000000000000,6"
 #SVPCHAIN_EVM_ORACLE="0x..."
 #SVPCHAIN_EVM_BRIDGE="0x..."
 #SVPCHAIN_EVM_BRIDGE_ROUTES="routes.json"
@@ -68,3 +70,6 @@ SVPCHAIN_EVM_AGENT_PUBLIC_URL="https://evm-agent.svpchain.org"
 # SVPCHAIN_GRPC_ADDR above is the address the deployed container dials, which
 # on a normal deployment is meaningful only on the remote host.
 #SVPCHAIN_REGISTER_GRPC="grpc.testnet.svpchain.org:443"
+
+# Public CometBFT RPC alternative for --register when gRPC is private.
+#SVPCHAIN_REGISTER_RPC="https://rpc-testnet.svpchain.org"

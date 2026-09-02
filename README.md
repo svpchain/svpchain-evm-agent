@@ -100,14 +100,24 @@ different local fixture. `register --dry-run` never transfers funds.
 
 ## Deployment
 
-`scripts/deploy.sh` still builds and ships the container, configuration, bridge
-routes, and reverse-proxy snippet. A normal install no longer needs an operator
-key. The obsolete `--register` and `--gen-operator-key` modes refuse explicitly.
+`scripts/deploy.sh` builds and ships the container, configuration, bridge
+routes, and reverse-proxy snippet. A normal install does not need an owner key
+on the remote host: the agent never signs transactions. After the public URL is
+live, `--register` fetches its Agent Card, then signs and broadcasts the
+registration locally with the owner key in the local config directory.
 
 ```sh
 ./scripts/deploy.sh --host www@host.example.com \
   --public-url https://evm-agent.svpchain.org
+
+# After DNS and the reverse proxy serve the public Agent Card:
+./scripts/deploy.sh --register
 ```
+
+Use `./scripts/deploy.sh --gen-owner-key` to create the local owner key first.
+Set `SVPCHAIN_REGISTER_RPC` to use a public CometBFT RPC endpoint, or
+`SVPCHAIN_REGISTER_GRPC` for a reachable gRPC endpoint. `--register --dry-run`
+validates the Card and registration request without broadcasting.
 
 ## Development notes
 
