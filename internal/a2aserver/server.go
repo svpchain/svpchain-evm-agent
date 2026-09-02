@@ -22,7 +22,9 @@ import (
 // registry under its own card identity, with the auth resolver mapping A2A
 // callers onto tool tenants. It runs the app's background caches alongside
 // the HTTP server and stops both when ctx is cancelled or either fails.
-func StartFullFor(ctx context.Context, cfg *config.Config, app *wire.App, ident CardIdentity) error {
+func StartFullFor(ctx context.Context, cfg *config.Config, app *wire.App, ident CardIdentity, intent interface {
+	Run(context.Context, string) (string, error)
+}) error {
 	// The legacy {"skill":"svpchain-market-data","query":…} path answers from
 	// this service before the registry is consulted, so a binary that does not
 	// register the market-data family must not construct it — otherwise it
@@ -32,10 +34,11 @@ func StartFullFor(ctx context.Context, cfg *config.Config, app *wire.App, ident 
 		market = marketdata.NewService(app.Indexer)
 	}
 
-	executor := NewFullExecutor(
+	executor := NewFullExecutorWithIntent(
 		market,
 		app.Registry,
 		&AuthResolver{Tenants: app.Tenants, Sessions: app.Sessions},
+		intent,
 	)
 
 	card := BuildAgentCardFor(ident, cfg.PublicURL, app.Registry)

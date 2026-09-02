@@ -26,6 +26,8 @@ dex_chain.grpc_addr        = "127.0.0.1:9090"
 dex_chain.comet_rpc_url    = "http://127.0.0.1:26657"
 dex_chain.indexer_base_url = "http://127.0.0.1:3002"
 listen_addr                = ":8081"
+defi_mcp.url               = "http://127.0.0.1:18081/mcp"
+llm.api_key_env            = "TEST_LLM_API_KEY"
 `
 
 func TestLoadMinimalAppliesDefaults(t *testing.T) {

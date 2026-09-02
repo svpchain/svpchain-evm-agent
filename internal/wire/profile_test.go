@@ -25,10 +25,9 @@ func TestEVMProfileServesExactlyItsFamilies(t *testing.T) {
 	EVMProfile.Register(r, h)
 
 	want := map[string]bool{
-		toolbridge.SkillEVM:    true,
-		toolbridge.SkillAuth:   true,
-		toolbridge.SkillFaucet: true,
-		toolbridge.SkillMeta:   true,
+		toolbridge.SkillEVM:  true,
+		toolbridge.SkillAuth: true,
+		toolbridge.SkillMeta: true,
 	}
 	got := r.BySkill()
 	for skill := range want {
@@ -48,29 +47,22 @@ func TestEVMProfileServesTheCallerSignedSupportStack(t *testing.T) {
 
 	r := toolbridge.NewEmpty()
 	EVMProfile.Register(r, h)
-	for _, tool := range []string{
-		"auth_challenge", "auth_verify",
-		"list_faucet_tokens", "faucet_claim",
-	} {
+	for _, tool := range []string{"auth_challenge", "auth_verify", "broadcast_evm_tx", "evm_tx_status"} {
 		if _, ok := r.Lookup(tool); !ok {
 			t.Errorf("profile %s missing delegation-stack tool %q", EVMProfile.Name, tool)
 		}
 	}
 }
 
-// The EVM family is served whole: the DeFi surface plus the landing rail its
-// builds settle through. A binary serving only half would advertise builds it
-// could not land.
-func TestEVMProfileServesTheWholeEVMFamily(t *testing.T) {
+// The local EVM family is intentionally only the landing rail. DeFi tools are
+// dynamically added from the private MCP startup catalog.
+func TestEVMProfileServesOnlyTheLandingRail(t *testing.T) {
 	h := &tools.Handlers{}
 
 	r := toolbridge.NewEmpty()
 	EVMProfile.Register(r, h)
 
-	full := toolbridge.NewEmpty()
-	full.RegisterEVM(h)
-
-	if got, want := len(r.BySkill()[toolbridge.SkillEVM]), len(full.BySkill()[toolbridge.SkillEVM]); got != want {
-		t.Errorf("the evm profile serves %d EVM tools, the family has %d", got, want)
+	if got, want := len(r.BySkill()[toolbridge.SkillEVM]), 2; got != want {
+		t.Errorf("the evm profile serves %d local EVM tools, want %d", got, want)
 	}
 }

@@ -15,9 +15,14 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/svpchain/svpchain-evm-agent/internal/a2aserver"
+	"github.com/svpchain/svpchain-evm-agent/internal/agentrunner"
 	"github.com/svpchain/svpchain-evm-agent/internal/config"
+	"github.com/svpchain/svpchain-evm-agent/internal/defimcp"
+	"github.com/svpchain/svpchain-evm-agent/internal/llm"
+	"github.com/svpchain/svpchain-evm-agent/internal/toolbridge"
 	"github.com/svpchain/svpchain-evm-agent/internal/wire"
 )
 
@@ -54,5 +59,32 @@ func run(ctx context.Context, configPath string) error {
 		return err
 	}
 	defer app.Close()
-	return a2aserver.StartFullFor(ctx, cfg, app, identity)
+	mcpClient, err := defimcp.Connect(ctx, cfg.DeFiMCP.URL, time.Duration(cfg.DeFiMCP.Timeout))
+	if err != nil {
+		return err
+	}
+	defer mcpClient.Close()
+	for _, tool := range mcpClient.Tools() {
+		if reservedMCPTool(tool.Name) {
+			continue
+		}
+		name := tool.Name
+		if err := app.Registry.AddProxy(toolbridge.SkillEVM, name, tool.InputSchema, func(callCtx context.Context, args map[string]any) (string, error) {
+			return mcpClient.Call(callCtx, name, args)
+		}); err != nil {
+			return err
+		}
+	}
+	key := os.Getenv(cfg.LLM.APIKeyEnv)
+	runner := agentrunner.New(llm.Config{Provider: cfg.LLM.Provider, BaseURL: cfg.LLM.BaseURL, Model: cfg.LLM.Model, APIKey: key}, mcpClient)
+	return a2aserver.StartFullFor(ctx, cfg, app, identity, runner)
+}
+
+func reservedMCPTool(name string) bool {
+	switch name {
+	case "auth_challenge", "auth_verify", "broadcast_evm_tx", "evm_tx_status", "list_tools":
+		return true
+	default:
+		return false
+	}
 }

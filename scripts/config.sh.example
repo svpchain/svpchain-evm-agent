@@ -21,6 +21,13 @@ SVPCHAIN_EVM_RPC="http://127.0.0.1:8545"
 # The public A2A URL. Nothing is appended to it.
 SVPCHAIN_EVM_AGENT_PUBLIC_URL="https://evm-agent.svpchain.org"
 
+# Private DeFi MCP and the LLM used for natural-language A2A messages.
+SVPCHAIN_DEFI_MCP_URL="http://127.0.0.1:18081/mcp"
+SVPCHAIN_EVM_AGENT_LLM_API_KEY=""
+#SVPCHAIN_EVM_AGENT_LLM_PROVIDER="openai"
+#SVPCHAIN_EVM_AGENT_LLM_BASE_URL="https://api.openai.com"
+#SVPCHAIN_EVM_AGENT_LLM_MODEL="gpt-5-mini"
+
 # Optional EVM families.
 #SVPCHAIN_EVM_UNISWAP_ROUTER="0x..."
 #SVPCHAIN_EVM_WSVP="0x..."

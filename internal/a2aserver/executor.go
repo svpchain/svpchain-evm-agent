@@ -28,6 +28,9 @@ type Executor struct {
 
 	registry *toolbridge.Registry
 	authr    *AuthResolver
+	intent   interface {
+		Run(context.Context, string) (string, error)
+	}
 }
 
 var _ a2asrv.AgentExecutor = (*Executor)(nil)
@@ -35,6 +38,12 @@ var _ a2asrv.AgentExecutor = (*Executor)(nil)
 // NewFullExecutor returns an executor serving the whole operation registry.
 func NewFullExecutor(market *marketdata.Service, registry *toolbridge.Registry, authr *AuthResolver) *Executor {
 	return &Executor{market: market, registry: registry, authr: authr}
+}
+
+func NewFullExecutorWithIntent(market *marketdata.Service, registry *toolbridge.Registry, authr *AuthResolver, intent interface {
+	Run(context.Context, string) (string, error)
+}) *Executor {
+	return &Executor{market: market, registry: registry, authr: authr, intent: intent}
 }
 
 func (e *Executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
@@ -83,7 +92,16 @@ func (e *Executor) handle(ctx context.Context, execCtx *a2asrv.ExecutorContext) 
 
 	var req Request
 	if err := json.Unmarshal([]byte(raw), &req); err != nil {
+		if e.intent != nil {
+			return e.intent.Run(ctx, raw)
+		}
 		return "", fmt.Errorf("request must be JSON naming a skill: %w", err)
+	}
+	if strings.TrimSpace(req.Intent) != "" {
+		if e.intent == nil {
+			return "", fmt.Errorf("natural-language tasks are not configured")
+		}
+		return e.intent.Run(ctx, req.Intent)
 	}
 	if req.Skill == "" {
 		return "", fmt.Errorf("no skill named")

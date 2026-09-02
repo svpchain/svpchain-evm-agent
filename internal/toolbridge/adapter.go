@@ -37,6 +37,30 @@ type Op struct {
 	// operation registered without a typed input (see addRefusing); callers
 	// should read that as "an object, contents unspecified".
 	InputSchema *jsonschema.Schema
+	// RawInputSchema preserves a schema supplied by a private MCP server.
+	RawInputSchema any
+}
+
+// AddProxy registers a private MCP tool under this agent's public skill. Its
+// schema is retained verbatim for list_tools and the LLM; args are decoded as
+// an object before the proxy is invoked.
+func (r *Registry) AddProxy(skill, tool string, schema any, call func(context.Context, map[string]any) (string, error)) error {
+	if _, dup := r.ops[tool]; dup {
+		return fmt.Errorf("toolbridge: duplicate tool %q", tool)
+	}
+	r.ops[tool] = Op{Skill: skill, Tool: tool, RawInputSchema: schema, Call: func(ctx context.Context, raw json.RawMessage) (any, error) {
+		args := map[string]any{}
+		if len(raw) > 0 && string(raw) != "null" {
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return nil, fmt.Errorf("decode args: %w", err)
+			}
+			if args == nil {
+				return nil, fmt.Errorf("args must be an object")
+			}
+		}
+		return call(ctx, args)
+	}}
+	return nil
 }
 
 // Bound is what an adapt* helper produces: a call plus the schema of the

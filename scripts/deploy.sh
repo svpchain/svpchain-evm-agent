@@ -337,6 +337,11 @@ indexer="${SVPCHAIN_INDEXER:-http://127.0.0.1:3002}"
 agent_chain_id="${SVPCHAIN_AGENT_CHAIN_ID:-}"
 agent_chain_rest="${SVPCHAIN_AGENT_CHAIN_REST:-}"
 public_url="${SVPCHAIN_EVM_AGENT_PUBLIC_URL:-https://agent-testnet.svpchain.org}"
+defi_mcp_url="${SVPCHAIN_DEFI_MCP_URL:-}"
+llm_provider="${SVPCHAIN_EVM_AGENT_LLM_PROVIDER:-openai}"
+llm_base_url="${SVPCHAIN_EVM_AGENT_LLM_BASE_URL:-}"
+llm_model="${SVPCHAIN_EVM_AGENT_LLM_MODEL:-}"
+llm_api_key_env="SVPCHAIN_EVM_AGENT_LLM_API_KEY"
 # The owner key MATERIAL, not a path. There is deliberately no flag for it:
 # a hex key in argv is visible in `ps` and lands in shell history. The config
 # file is sourced, so it can compute the value instead of storing it.
@@ -562,6 +567,19 @@ listen_addr      = "0.0.0.0:${AGENT_PORT}"
 public_url       = "${public_url}"
 broadcast_mode   = "server"
 EOF
+  [[ -n "$defi_mcp_url" ]] || fail "SVPCHAIN_DEFI_MCP_URL is required"
+  cat <<EOF
+
+[defi_mcp]
+url = "${defi_mcp_url}"
+timeout = "90s"
+
+[llm]
+provider = "${llm_provider}"
+base_url = "${llm_base_url}"
+model = "${llm_model}"
+api_key_env = "${llm_api_key_env}"
+EOF
   [[ -n "$faucet_url" ]] && echo "faucet_base_url         = \"${faucet_url}\""
   # Persist per-symbol transfer-out caps on the agent's own writable data
   # volume (the config dir holds only read-only mounts) — the path is under the
@@ -714,6 +732,8 @@ render_compose_yaml() {
     # network_mode: host — the listener binds 0.0.0.0:${AGENT_PORT} (compose
     # \`ports:\` is ignored in host mode; the port lives in agent.toml).
     network_mode: host
+    environment:
+      ${llm_api_key_env}: "${SVPCHAIN_EVM_AGENT_LLM_API_KEY:-}"
     volumes:
       - ${install_dir}/agent.toml:/etc/${AGENT_NAME}/agent.toml:ro
       - ${install_dir}/data:/var/lib/${AGENT_NAME}

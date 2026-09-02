@@ -29,7 +29,6 @@ type Profile struct {
 // every returned EVM payload locally before asking this service to broadcast it.
 func RegisterCallerSignedStack(r *toolbridge.Registry, h *tools.Handlers) {
 	r.RegisterAuth(h)
-	r.RegisterFaucet(h)
 	// Self-description, so an A2A caller can discover this profile's surface
 	// without an MCP connection to the same handlers.
 	r.RegisterMeta()
@@ -40,7 +39,7 @@ func RegisterCallerSignedStack(r *toolbridge.Registry, h *tools.Handlers) {
 var EVMProfile = Profile{
 	Name: "evm",
 	Register: func(r *toolbridge.Registry, h *tools.Handlers) {
-		r.RegisterEVM(h)
+		r.RegisterEVMBroadcast(h)
 		RegisterCallerSignedStack(r, h)
 	},
 }

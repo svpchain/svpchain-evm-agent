@@ -9,6 +9,18 @@ listen_addr = ":8083"
 # How callers reach this agent; advertised in the Agent Card.
 public_url  = "http://localhost:8083"
 
+[defi_mcp]
+# Private Streamable HTTP endpoint. The agent synchronizes tools/list at boot.
+url = "http://127.0.0.1:18081/mcp"
+timeout = "90s"
+
+[llm]
+provider = "openai"
+base_url = "https://api.openai.com"
+model = "gpt-5-mini"
+# Name of the environment variable, never the secret itself.
+api_key_env = "EVM_AGENT_LLM_API_KEY"
+
 [dex_chain]
 id               = "svpchain-testnet-1"
 grpc_addr        = "127.0.0.1:9090"

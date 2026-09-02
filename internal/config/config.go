@@ -49,9 +49,25 @@ type Config struct {
 	// the signed tx a caller lands via broadcast_signed_tx.
 	BroadcastMode string `toml:"broadcast_mode"`
 
-	Cache  CacheConfig  `toml:"cache"`
-	Limits LimitsConfig `toml:"limits"`
-	Fee    FeeConfig    `toml:"fee"`
+	Cache   CacheConfig   `toml:"cache"`
+	Limits  LimitsConfig  `toml:"limits"`
+	Fee     FeeConfig     `toml:"fee"`
+	LLM     LLMConfig     `toml:"llm"`
+	DeFiMCP DeFiMCPConfig `toml:"defi_mcp"`
+}
+
+// LLMConfig names the provider credentials through an environment variable.
+// Secrets must never be committed to agent.toml.
+type LLMConfig struct {
+	Provider  string `toml:"provider"`
+	BaseURL   string `toml:"base_url"`
+	Model     string `toml:"model"`
+	APIKeyEnv string `toml:"api_key_env"`
+}
+
+type DeFiMCPConfig struct {
+	URL     string   `toml:"url"`
+	Timeout Duration `toml:"timeout"`
 }
 
 // DEXChainConfig points the agent at the DEX chain (an EVM-compatible
@@ -225,6 +241,12 @@ func (c *Config) Validate() error {
 	}
 	if err := c.validateAssets(); err != nil {
 		return err
+	}
+	if strings.TrimSpace(c.DeFiMCP.URL) == "" {
+		return fmt.Errorf("defi_mcp.url is required")
+	}
+	if strings.TrimSpace(c.LLM.APIKeyEnv) == "" {
+		return fmt.Errorf("llm.api_key_env is required")
 	}
 	return nil
 }

@@ -17,6 +17,7 @@ type Request struct {
 	// Bearer authenticates the caller when it cannot set an Authorization
 	// header. The header wins when both are present.
 	Bearer string `json:"bearer,omitempty"`
+	Intent string `json:"intent,omitempty"`
 
 	// Legacy read-layer fields, honored when Skill is svpchain-market-data
 	// and Query is set.

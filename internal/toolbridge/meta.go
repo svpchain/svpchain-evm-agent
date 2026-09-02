@@ -3,8 +3,6 @@ package toolbridge
 import (
 	"context"
 	"encoding/json"
-
-	"github.com/google/jsonschema-go/jsonschema"
 )
 
 // The A2A surface has no equivalent of MCP's tools/list: a caller that reaches
@@ -35,7 +33,7 @@ type ToolDescriptor struct {
 	// InputSchema is the JSON Schema of the tool's args object. Omitted for an
 	// operation registered without a typed input, which a caller should treat
 	// as an object of unspecified shape.
-	InputSchema *jsonschema.Schema `json:"input_schema,omitempty"`
+	InputSchema any `json:"input_schema,omitempty"`
 }
 
 // ListToolsOutput is the list_tools reply, sorted by tool name.
@@ -67,10 +65,14 @@ func (r *Registry) listTools(skill string) ListToolsOutput {
 		if skill != "" && op.Skill != skill {
 			continue
 		}
+		schema := any(op.InputSchema)
+		if op.RawInputSchema != nil {
+			schema = op.RawInputSchema
+		}
 		out.Tools = append(out.Tools, ToolDescriptor{
 			Skill:       op.Skill,
 			Tool:        op.Tool,
-			InputSchema: op.InputSchema,
+			InputSchema: schema,
 		})
 	}
 	return out
