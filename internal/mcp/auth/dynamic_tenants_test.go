@@ -10,8 +10,7 @@ import (
 
 func defaultCfg() DynamicTenantStoreConfig {
 	return DynamicTenantStoreConfig{
-		BearerTTL:                 DefaultBearerTTL,
-		DefaultAllowedSubaccounts: []uint32{0, 1, 2},
+		BearerTTL: DefaultBearerTTL,
 	}
 }
 
@@ -29,38 +28,26 @@ func TestDynamicTenants_MintAndLookup(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, tenantID, rec.TenantID)
 	require.Equal(t, "svp1alice", rec.Owner)
-	require.Len(t, rec.AllowedSubaccounts, 3)
-	_, ok := rec.AllowedSubaccounts[1]
-	require.True(t, ok)
-	require.False(t, rec.KillSwitch)
-
-	// Lookup by tenant id (used post-middleware by handler resolver) must
-	// return the same record.
-	recByID, err := s.LookupByTenantID(tenantID)
-	require.NoError(t, err)
-	require.Equal(t, rec.Owner, recByID.Owner)
 }
 
 func TestDynamicTenants_Expired(t *testing.T) {
 	clk := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 	s := NewDynamicTenantStore(DynamicTenantStoreConfig{
-		BearerTTL: time.Hour, DefaultAllowedSubaccounts: []uint32{0},
+		BearerTTL: time.Hour,
 	}, func() time.Time { return clk })
 
-	bearer, tenantID, _, err := s.Mint("svp1bob")
+	bearer, _, _, err := s.Mint("svp1bob")
 	require.NoError(t, err)
 
 	clk = clk.Add(61 * time.Minute) // past TTL
 	_, err = s.LookupByBearer(bearer)
-	require.True(t, errors.Is(err, ErrBearerExpired))
-	_, err = s.LookupByTenantID(tenantID)
 	require.True(t, errors.Is(err, ErrBearerExpired))
 }
 
 func TestDynamicTenants_Sweep(t *testing.T) {
 	clk := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 	s := NewDynamicTenantStore(DynamicTenantStoreConfig{
-		BearerTTL: time.Hour, DefaultAllowedSubaccounts: []uint32{0},
+		BearerTTL: time.Hour,
 	}, func() time.Time { return clk })
 
 	for range 5 {

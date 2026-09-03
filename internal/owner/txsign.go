@@ -15,8 +15,7 @@ import (
 	"github.com/svpchain/svpchain-evm-agent/internal/mcp/payload"
 )
 
-// FeeSpec is the fee stamped onto the registration transaction, mirroring the
-// [fee] table the payload assembler uses.
+// FeeSpec is the fee stamped onto a registration transaction.
 type FeeSpec struct {
 	Denom    string
 	Amount   string
@@ -27,12 +26,8 @@ type FeeSpec struct {
 // TxBody, builds a SIGN_MODE_DIRECT AuthInfo, signs with priv, and returns the
 // marshaled TxRaw ready for BroadcastSync.
 //
-// It exists because signer.Sign — the client-side payload signer — always
-// stamps an EMPTY fee. That is right for its caller: short-term CLOB orders
-// are gas-free on svpchain. Registry lifecycle messages are not, and a tx
-// whose declared fee is missing from AuthInfo is rejected outright, so this
-// path always stamps one. There is deliberately no gas-free branch here — no
-// message this package signs qualifies for it.
+// Registry lifecycle messages require a declared fee, so this path always
+// stamps one. There is no gas-free branch here.
 func SignTx(
 	priv *ethsecp256k1.PrivKey,
 	chainID string,

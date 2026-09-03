@@ -13,8 +13,6 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
 	"github.com/svpchain/svpchain-evm-agent/internal/config"
-	"github.com/svpchain/svpchain-evm-agent/internal/marketdata"
-	"github.com/svpchain/svpchain-evm-agent/internal/toolbridge"
 	"github.com/svpchain/svpchain-evm-agent/internal/wire"
 )
 
@@ -25,19 +23,9 @@ import (
 func StartFullFor(ctx context.Context, cfg *config.Config, app *wire.App, ident CardIdentity, intent interface {
 	Run(context.Context, string) (string, error)
 }) error {
-	// The legacy {"skill":"svpchain-market-data","query":…} path answers from
-	// this service before the registry is consulted, so a binary that does not
-	// register the market-data family must not construct it — otherwise it
-	// would serve queries its card never advertises.
-	var market *marketdata.Service
-	if len(app.Registry.BySkill()[toolbridge.SkillMarketData]) > 0 {
-		market = marketdata.NewService(app.Indexer)
-	}
-
-	executor := NewFullExecutorWithIntent(
-		market,
+	executor := NewExecutor(
 		app.Registry,
-		&AuthResolver{Tenants: app.Tenants, Sessions: app.Sessions},
+		&AuthResolver{Tenants: app.Tenants},
 		intent,
 	)
 
@@ -51,7 +39,7 @@ func StartFullFor(ctx context.Context, cfg *config.Config, app *wire.App, ident 
 
 	serveErr := make(chan error, 1)
 	go func() {
-		serveErr <- serve(ctx, cfg.ListenAddr, cfg.PublicURL, cfg.DEXChain.IndexerBaseURL, executor, card)
+		serveErr <- serve(ctx, cfg.ListenAddr, cfg.PublicURL, executor, card)
 	}()
 
 	// Either half failing takes the whole agent down: a dead markets cache
@@ -71,7 +59,7 @@ func StartFullFor(ctx context.Context, cfg *config.Config, app *wire.App, ident 
 	}
 }
 
-func serve(ctx context.Context, listenAddr, publicURL, indexerURL string, executor *Executor, card *a2a.AgentCard) error {
+func serve(ctx context.Context, listenAddr, publicURL string, executor *Executor, card *a2a.AgentCard) error {
 	handler := a2asrv.NewHandler(executor)
 	mux := http.NewServeMux()
 	mux.Handle("/invoke", a2asrv.NewJSONRPCHandler(handler))
@@ -97,7 +85,6 @@ func serve(ctx context.Context, listenAddr, publicURL, indexerURL string, execut
 
 	fmt.Fprintf(os.Stderr, "%s: listening on %s\n", card.Name, listenAddr)
 	fmt.Fprintf(os.Stderr, "%s: agent card at %s%s\n", card.Name, publicURL, a2asrv.WellKnownAgentCardPath)
-	fmt.Fprintf(os.Stderr, "%s: reading indexer at %s\n", card.Name, indexerURL)
 
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err

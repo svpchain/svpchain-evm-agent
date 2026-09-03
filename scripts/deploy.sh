@@ -11,13 +11,9 @@
 #
 # Flow: build (vendored, so the go.mod replace to ../svpagent/protocol never
 # leaves the operator) → docker save (cached by image id) → rsync one staging
-# dir (agent.toml, docker-compose.yml, routes.json, operator.key at 0600 when
-# given) plus the image tar to ~/svpchain-evm-agent → docker load → docker
+# dir (agent.toml and docker-compose.yml) plus the image tar to
+# ~/svpchain-evm-agent → docker load → docker
 # compose up -d → smoke-test /healthz and the agent card over loopback.
-#
-# The bridge route registry rides along: this is the agent that serves the
-# bridge, and core loads routes.json at startup — a missing or unroutable
-# registry is a boot failure, not a call-time refusal.
 #
 # The operator key turns delegated execution on. It must be DISTINCT from every
 # other agent's: an agent's on-chain id derives from its key and
@@ -27,7 +23,7 @@
 #
 # The remote needs only docker + the compose v2 plugin reachable by the ssh
 # user without sudo. Auth state is in-memory, so a redeploy wipes it; the
-# transfer-out caps persist on the data volume.
+# relay duplicate-request state is in-memory, so a redeploy wipes it.
 #
 # Config file (so a routine install needs no flags at all):
 #   ~/.config/svpchain-evm-agent/config.sh
@@ -54,8 +50,6 @@
 # Chain endpoints:
 #   --chain-id <id>                SVPCHAIN_CHAIN_ID     (svp-2517-1)
 #   --grpc-addr <host:port>        SVPCHAIN_GRPC_ADDR    (127.0.0.1:9090)
-#   --comet-rpc <url>              SVPCHAIN_COMET_RPC    (http://127.0.0.1:26657)
-#   --indexer <url>                SVPCHAIN_INDEXER      (http://127.0.0.1:3002)
 #   --agent-chain-id <id>          SVPCHAIN_AGENT_CHAIN_ID
 #   --agent-chain-rest <url>       SVPCHAIN_AGENT_CHAIN_REST
 #                                  Optional separate x/agent + x/agentwallet
@@ -84,7 +78,7 @@
 #                                  yourself, which the sourced config file can
 #                                  compute:
 #                                    SVPCHAIN_EVM_AGENT_OWNER_KEY="$(op read …)"
-#   --operator-capabilities <csv>  Default "evm.swap,evm.bridge,evm.tokens".
+#   --operator-capabilities <csv>  Default "evm.defi,evm.relay".
 #                                  SVPCHAIN_OPERATOR_CAPABILITIES
 #   --operator-metadata <text>     SVPCHAIN_OPERATOR_METADATA
 #   --pricing-amount <base units>   --register only. paymentToken amount.
@@ -92,45 +86,15 @@
 #   --pricing-unit <unit>           --register only. e.g. "call".
 #                                  SVPCHAIN_AGENT_PRICING_UNIT
 #
-# The EVM surface (this agent's whole point):
+# Runtime:
 #   --evm-rpc <url>                The chain's EVM JSON-RPC. Required to boot.
 #                                  SVPCHAIN_EVM_RPC
-#   --evm-uniswap-router <addr>    Swap router; with --evm-wsvp.
-#                                  SVPCHAIN_EVM_UNISWAP_ROUTER
-#   --evm-wsvp <addr>              Wrapped SVP, the swap rail's base asset.
-#                                  SVPCHAIN_EVM_WSVP
-#   --evm-uniswap-factory <addr>   Optional Uniswap V2 Factory for live Pair
-#                                  discovery. SVPCHAIN_EVM_UNISWAP_FACTORY
-#   --evm-assets <assets>          Stable ERC-20 aliases, formatted as
-#                                  id,address,decimals;... . These are
-#                                  returned by list_evm_assets.
-#                                  SVPCHAIN_EVM_ASSETS
-#   --evm-oracle <addr>            Price feed for get_oracle_price.
-#                                  SVPCHAIN_EVM_ORACLE
-#   --evm-bridge-addr <addr>       SVPBridge on this chain. Needs the routes
-#                                  registry and the source chain id.
-#   --evm-bridge-routes <path>     Registry path in the container. RELATIVE
-#                                  (default routes.json) → generated and
-#                                  shipped beside agent.toml; ABSOLUTE →
-#                                  operator-managed, not shipped.
-#                                  SVPCHAIN_EVM_BRIDGE, SVPCHAIN_EVM_BRIDGE_ROUTES
-#   --evm-bridge-routes-src <path> Ship this file instead of the generated one.
-#                                  SVPCHAIN_EVM_BRIDGE_ROUTES_SRC
-#   --evm-bridge-source-chain-id   This chain's id in the registry (2517).
-#                                  SVPCHAIN_EVM_BRIDGE_SOURCE_CHAIN_ID
-#   --evm-foreign-chains <triples> ";"-separated chainId,rpcUrl,bridgeAddr.
-#                                  SVPCHAIN_EVM_FOREIGN_CHAINS
-#
-# Optional families and tuning:
-#   --faucet-url <url>             Empty → the faucet skills refuse.
-#                                  SVPCHAIN_FAUCET_URL
-#   --markets-refresh <dur>        Default 30s.  SVPCHAIN_MARKETS_REFRESH
-#   --deposit-max-usdc <n>         Caps on funds movements, in human USDC;
-#   --withdraw-max-usdc <n>        unset → no cap.
-#   --transfer-max-usdc <n>        SVPCHAIN_DEPOSIT_MAX_USDC,
-#   --daily-withdraw-cap-usdc <n>  SVPCHAIN_WITHDRAW_MAX_USDC,
-#                                  SVPCHAIN_TRANSFER_MAX_USDC,
-#                                  SVPCHAIN_DAILY_WITHDRAW_CAP_USDC
+#   --defi-mcp-url <url>           Private Streamable HTTP MCP endpoint.
+#                                  SVPCHAIN_DEFI_MCP_URL
+#   --llm-provider <provider>      Default "openai".
+#                                  SVPCHAIN_EVM_AGENT_LLM_PROVIDER
+#   --llm-base-url <url>           SVPCHAIN_EVM_AGENT_LLM_BASE_URL
+#   --llm-model <model>            SVPCHAIN_EVM_AGENT_LLM_MODEL
 #
 # Build and placement:
 #   --image-tag <tag>              Default <git-short-sha>.
@@ -174,7 +138,7 @@
 #   --print-env                    Show every setting, its resolved value and
 #                                  where it came from. The operator key prints as
 #                                  "set"/"unset", never its value.
-#   --print-config / --print-compose / --print-nginx / --print-routes
+#   --print-config / --print-compose / --print-nginx
 #   --dry-run / --uninstall
 #
 # Examples:
@@ -258,17 +222,13 @@ unset _i _j
 # caller already exported survives.
 readonly CONFIG_VARS=(
   SVPCHAIN_DEPLOY_HOST SVPCHAIN_DEPLOY_JUMP_BOX SVPCHAIN_CHAIN_ID SVPCHAIN_GRPC_ADDR
-  SVPCHAIN_COMET_RPC SVPCHAIN_INDEXER SVPCHAIN_AGENT_CHAIN_ID SVPCHAIN_AGENT_CHAIN_REST
+  SVPCHAIN_AGENT_CHAIN_ID SVPCHAIN_AGENT_CHAIN_REST
   SVPCHAIN_EVM_AGENT_PUBLIC_URL SVPCHAIN_EVM_AGENT_OWNER_KEY SVPCHAIN_REGISTER_GRPC SVPCHAIN_REGISTER_RPC
   SVPCHAIN_OPERATOR_CAPABILITIES SVPCHAIN_OPERATOR_METADATA SVPCHAIN_INSTALL_DIR
   SVPCHAIN_AGENT_PRICING_AMOUNT SVPCHAIN_AGENT_PRICING_UNIT
-  SVPCHAIN_EVM_RPC SVPCHAIN_EVM_UNISWAP_ROUTER SVPCHAIN_EVM_WSVP
-  SVPCHAIN_EVM_UNISWAP_FACTORY SVPCHAIN_EVM_ASSETS SVPCHAIN_EVM_ORACLE
-  SVPCHAIN_EVM_BRIDGE SVPCHAIN_EVM_BRIDGE_ROUTES
-  SVPCHAIN_EVM_BRIDGE_ROUTES_SRC SVPCHAIN_EVM_BRIDGE_SOURCE_CHAIN_ID
-  SVPCHAIN_EVM_FOREIGN_CHAINS SVPCHAIN_FAUCET_URL SVPCHAIN_MARKETS_REFRESH
-  SVPCHAIN_DEPOSIT_MAX_USDC SVPCHAIN_WITHDRAW_MAX_USDC
-  SVPCHAIN_TRANSFER_MAX_USDC SVPCHAIN_DAILY_WITHDRAW_CAP_USDC
+  SVPCHAIN_EVM_RPC SVPCHAIN_DEFI_MCP_URL
+  SVPCHAIN_EVM_AGENT_LLM_PROVIDER SVPCHAIN_EVM_AGENT_LLM_BASE_URL
+  SVPCHAIN_EVM_AGENT_LLM_MODEL SVPCHAIN_EVM_AGENT_LLM_API_KEY
 )
 
 # source_config — source the config file if it exists, refusing one that other
@@ -320,7 +280,6 @@ fi
 mode="install"        # install | uninstall | init-config | gen-owner-key | register | print-*
                       #         | register | print-env | print-config
                       #         | print-compose | print-nginx
-                      #         | print-routes
 
 # Settings a flag overrode, so --print-env can say so. Same space-padded-string
 # trick as ENV_PRESET, for the same bash 3.2 reason.
@@ -332,8 +291,6 @@ host=""
 jump_box="${SVPCHAIN_DEPLOY_JUMP_BOX:-}"
 chain_id="${SVPCHAIN_CHAIN_ID:-svp-2517-1}"
 grpc_addr="${SVPCHAIN_GRPC_ADDR:-127.0.0.1:9090}"
-comet_rpc="${SVPCHAIN_COMET_RPC:-http://127.0.0.1:26657}"
-indexer="${SVPCHAIN_INDEXER:-http://127.0.0.1:3002}"
 agent_chain_id="${SVPCHAIN_AGENT_CHAIN_ID:-}"
 agent_chain_rest="${SVPCHAIN_AGENT_CHAIN_REST:-}"
 public_url="${SVPCHAIN_EVM_AGENT_PUBLIC_URL:-https://agent-testnet.svpchain.org}"
@@ -346,32 +303,14 @@ llm_api_key_env="SVPCHAIN_EVM_AGENT_LLM_API_KEY"
 # a hex key in argv is visible in `ps` and lands in shell history. The config
 # file is sourced, so it can compute the value instead of storing it.
 owner_key="${SVPCHAIN_EVM_AGENT_OWNER_KEY:-}"
-operator_capabilities="${SVPCHAIN_OPERATOR_CAPABILITIES:-evm.swap,evm.bridge,evm.tokens}"
+operator_capabilities="${SVPCHAIN_OPERATOR_CAPABILITIES:-evm.defi,evm.relay}"
 operator_metadata="${SVPCHAIN_OPERATOR_METADATA:-}"
 pricing_amount="${SVPCHAIN_AGENT_PRICING_AMOUNT:-}"
 pricing_unit="${SVPCHAIN_AGENT_PRICING_UNIT:-}"
 evm_rpc="${SVPCHAIN_EVM_RPC:-http://127.0.0.1:8545}"
-evm_uniswap_router="${SVPCHAIN_EVM_UNISWAP_ROUTER:-0xFe7bf2DFd5CB268C6779f1F614638a436Cb701e4}"
-evm_wsvp="${SVPCHAIN_EVM_WSVP:-0x771a0a63D8198b7dbea4a16910ff68AB38006531}"
-evm_uniswap_factory="${SVPCHAIN_EVM_UNISWAP_FACTORY:-0xd0Dd57B4a87dfdFC427FA3f71251D2427B6A1ac7}"
-evm_assets="${SVPCHAIN_EVM_ASSETS:-}"
-evm_oracle="${SVPCHAIN_EVM_ORACLE:-0xAE351F2dF66DF1A7d2eB0D7574BcDb909E680B56}"
-evm_bridge_addr="${SVPCHAIN_EVM_BRIDGE:-0x78Aca10afd5b28E838ECf0De20c5621CE39D9F4a}"
-evm_bridge_routes="${SVPCHAIN_EVM_BRIDGE_ROUTES:-routes.json}"
-evm_bridge_routes_src="${SVPCHAIN_EVM_BRIDGE_ROUTES_SRC:-}"
-evm_bridge_source_chain_id="${SVPCHAIN_EVM_BRIDGE_SOURCE_CHAIN_ID:-2517}"
-evm_foreign_chains="${SVPCHAIN_EVM_FOREIGN_CHAINS:-421614,https://sepolia-rollup.arbitrum.io/rpc,0xB6c74A758E3fA7bf57c22037821f7cA974d0CdfD;11155111,https://ethereum-sepolia-rpc.publicnode.com,0xb9a9937006E886F0Ec145a19634426300dD20a64}"
-# An explicitly empty config value disables faucet support. Use '-' rather
-# than ':-' so an operator can opt out without an override flag.
-faucet_url="${SVPCHAIN_FAUCET_URL-https://pre-faucet.svpchain.org}"
 install_dir="${SVPCHAIN_INSTALL_DIR:-~/svpchain-evm-agent}"
 image_tag=""
 platform="linux/amd64"
-deposit_max="${SVPCHAIN_DEPOSIT_MAX_USDC:-}"
-withdraw_max="${SVPCHAIN_WITHDRAW_MAX_USDC:-}"
-transfer_max="${SVPCHAIN_TRANSFER_MAX_USDC:-}"
-daily_withdraw_cap="${SVPCHAIN_DAILY_WITHDRAW_CAP_USDC:-}"
-markets_refresh="${SVPCHAIN_MARKETS_REFRESH:-30s}"
 skip_build="0"
 dry_run="0"
 # --register only. Deliberately not a config setting: the bond is a decision
@@ -394,8 +333,6 @@ while [[ $# -gt 0 ]]; do
     --jump-box)               jump_box="$2"; mark_flag SVPCHAIN_DEPLOY_JUMP_BOX;      shift 2 ;;
     --chain-id)               chain_id="$2"; mark_flag SVPCHAIN_CHAIN_ID;          shift 2 ;;
     --grpc-addr)              grpc_addr="$2"; mark_flag SVPCHAIN_GRPC_ADDR;         shift 2 ;;
-    --comet-rpc)              comet_rpc="$2"; mark_flag SVPCHAIN_COMET_RPC;         shift 2 ;;
-    --indexer)                indexer="$2"; mark_flag SVPCHAIN_INDEXER;           shift 2 ;;
     --agent-chain-id)         agent_chain_id="$2"; mark_flag SVPCHAIN_AGENT_CHAIN_ID;    shift 2 ;;
     --agent-chain-rest)       agent_chain_rest="$2"; mark_flag SVPCHAIN_AGENT_CHAIN_REST;  shift 2 ;;
     --public-url)             public_url="$2"; mark_flag SVPCHAIN_EVM_AGENT_PUBLIC_URL;  shift 2 ;;
@@ -404,25 +341,13 @@ while [[ $# -gt 0 ]]; do
     --pricing-amount)         pricing_amount="$2"; mark_flag SVPCHAIN_AGENT_PRICING_AMOUNT; shift 2 ;;
     --pricing-unit)           pricing_unit="$2"; mark_flag SVPCHAIN_AGENT_PRICING_UNIT; shift 2 ;;
     --evm-rpc)                evm_rpc="$2"; mark_flag SVPCHAIN_EVM_RPC;           shift 2 ;;
-    --evm-uniswap-router)     evm_uniswap_router="$2"; mark_flag SVPCHAIN_EVM_UNISWAP_ROUTER; shift 2 ;;
-    --evm-wsvp)               evm_wsvp="$2"; mark_flag SVPCHAIN_EVM_WSVP;          shift 2 ;;
-    --evm-uniswap-factory)    evm_uniswap_factory="$2"; mark_flag SVPCHAIN_EVM_UNISWAP_FACTORY; shift 2 ;;
-    --evm-assets)             evm_assets="$2"; mark_flag SVPCHAIN_EVM_ASSETS;      shift 2 ;;
-    --evm-oracle)             evm_oracle="$2"; mark_flag SVPCHAIN_EVM_ORACLE;        shift 2 ;;
-    --evm-bridge-addr)        evm_bridge_addr="$2"; mark_flag SVPCHAIN_EVM_BRIDGE;   shift 2 ;;
-    --evm-bridge-routes)      evm_bridge_routes="$2"; mark_flag SVPCHAIN_EVM_BRIDGE_ROUTES; shift 2 ;;
-    --evm-bridge-routes-src)  evm_bridge_routes_src="$2"; mark_flag SVPCHAIN_EVM_BRIDGE_ROUTES_SRC; shift 2 ;;
-    --evm-bridge-source-chain-id) evm_bridge_source_chain_id="$2"; mark_flag SVPCHAIN_EVM_BRIDGE_SOURCE_CHAIN_ID; shift 2 ;;
-    --evm-foreign-chains)     evm_foreign_chains="$2"; mark_flag SVPCHAIN_EVM_FOREIGN_CHAINS; shift 2 ;;
-    --faucet-url)             faucet_url="$2"; mark_flag SVPCHAIN_FAUCET_URL;        shift 2 ;;
+    --defi-mcp-url)           defi_mcp_url="$2"; mark_flag SVPCHAIN_DEFI_MCP_URL; shift 2 ;;
+    --llm-provider)            llm_provider="$2"; mark_flag SVPCHAIN_EVM_AGENT_LLM_PROVIDER; shift 2 ;;
+    --llm-base-url)            llm_base_url="$2"; mark_flag SVPCHAIN_EVM_AGENT_LLM_BASE_URL; shift 2 ;;
+    --llm-model)               llm_model="$2"; mark_flag SVPCHAIN_EVM_AGENT_LLM_MODEL; shift 2 ;;
     --install-dir)            install_dir="$2"; mark_flag SVPCHAIN_INSTALL_DIR;       shift 2 ;;
     --image-tag)              image_tag="$2";         shift 2 ;;
     --platform)               platform="$2";          shift 2 ;;
-    --deposit-max-usdc)       deposit_max="$2"; mark_flag SVPCHAIN_DEPOSIT_MAX_USDC;       shift 2 ;;
-    --withdraw-max-usdc)      withdraw_max="$2"; mark_flag SVPCHAIN_WITHDRAW_MAX_USDC;      shift 2 ;;
-    --transfer-max-usdc)      transfer_max="$2"; mark_flag SVPCHAIN_TRANSFER_MAX_USDC;      shift 2 ;;
-    --daily-withdraw-cap-usdc) daily_withdraw_cap="$2"; mark_flag SVPCHAIN_DAILY_WITHDRAW_CAP_USDC; shift 2 ;;
-    --markets-refresh)        markets_refresh="$2"; mark_flag SVPCHAIN_MARKETS_REFRESH;   shift 2 ;;
     # Already handled by the pre-scan above; consumed here so they are not
     # rejected as unknown.
     --config-dir)             mark_flag SVPCHAIN_CONFIG_DIR; shift 2 ;;
@@ -439,7 +364,6 @@ while [[ $# -gt 0 ]]; do
     --print-config)           mode="print-config";    shift ;;
     --print-compose)          mode="print-compose";   shift ;;
     --print-nginx)            mode="print-nginx";     shift ;;
-    --print-routes)           mode="print-routes";    shift ;;
     --dry-run)                dry_run="1";            shift ;;
     --uninstall)              mode="uninstall";       shift ;;
     -h|--help)
@@ -477,60 +401,7 @@ public_url="${public_url%/}"
 # signs nothing. --register is the one mode that refuses without it, since
 # registering IS the owner proving it holds the key the record is bound to.
 
-# The route registry this deploy ships, if any. Set by resolve_bridge_routes:
-# basename is what gets mounted beside agent.toml, src_abs is a local override
-# from --evm-bridge-routes-src (empty → generate from render_routes_json).
-bridge_routes_basename=""
-bridge_routes_src_abs=""
-
 # ---- shared helpers -------------------------------------------------------
-
-# resolve_bridge_routes — decide whether this deploy ships a route registry.
-# A RELATIVE --evm-bridge-routes is a path inside the container, so the file is
-# generated (or taken from --evm-bridge-routes-src) and mounted beside
-# agent.toml; an ABSOLUTE one is operator-managed and left alone.
-#
-# Silent, and run before the print modes, so --print-compose previews the
-# routes mount the deploy actually creates rather than omitting it.
-resolve_bridge_routes() {
-  [[ -n "$evm_bridge_addr" && -n "$evm_bridge_routes" && -n "$evm_bridge_source_chain_id" ]] || return 0
-  case "$evm_bridge_routes" in
-    /*) return 0 ;;
-  esac
-  bridge_routes_basename="$(basename "$evm_bridge_routes")"
-  if [[ -n "$evm_bridge_routes_src" ]]; then
-    if [[ "$evm_bridge_routes_src" = /* ]]; then
-      bridge_routes_src_abs="$evm_bridge_routes_src"
-    else
-      bridge_routes_src_abs="$(pwd)/$evm_bridge_routes_src"
-    fi
-    [[ -f "$bridge_routes_src_abs" ]] || fail "--evm-bridge-routes-src '$bridge_routes_src_abs' was not found"
-  fi
-}
-
-# emit_foreign_chains — emit the [[evm.bridge.foreign_chain]] array-of-tables
-# parsed from evm_foreign_chains (";"-separated "chainId,rpcUrl,bridgeAddr"
-# triples).
-emit_foreign_chains() {
-  [[ -z "$evm_foreign_chains" ]] && return 0
-  local triple cid rpc addr
-  local saved_ifs="$IFS"
-  IFS=';'
-  for triple in $evm_foreign_chains; do
-    IFS="$saved_ifs"
-    [[ -z "$triple" ]] && continue
-    IFS=',' read -r cid rpc addr <<<"$triple"
-    if [[ -z "$cid" || -z "$rpc" || -z "$addr" ]]; then
-      fail "--evm-foreign-chains: malformed triple \"$triple\" (want chainId,rpcUrl,bridgeAddr)"
-    fi
-    printf '\n[[evm.bridge.foreign_chain]]\n'
-    printf 'chain_id    = %s\n' "$cid"
-    printf 'rpc_url     = "%s"\n' "$rpc"
-    printf 'bridge_addr = "%s"\n' "$addr"
-    IFS=';'
-  done
-  IFS="$saved_ifs"
-}
 
 # emit_operator_capabilities — render the capabilities list as a TOML array.
 emit_operator_capabilities() {
@@ -552,12 +423,8 @@ emit_operator_capabilities() {
 # from the same globals, so a preview is the file that ships.
 #
 # listen_addr is always 0.0.0.0:<port> inside the container; --network host
-# means that's also the host-bound port. The optional blocks mirror
-# internal/config exactly: unset keys → those operations refuse at
-# call time. The EVM blocks are this agent's surface — wire.EVMProfile sets
-# BuildEVM, so core builds the swap, oracle and bridge deps from them. There is
-# no [evm.lendora] here: that one is gated on BuildLendora, which this profile
-# does not set, so the lending agent owns it.
+# means that's also the host-bound port. DeFi contracts are configured only in
+# the private MCP service, never in this public relay.
 render_agent_toml() {
   cat <<EOF
 # Auto-generated by scripts/deploy.sh — do not edit by hand.
@@ -565,7 +432,6 @@ render_agent_toml() {
 
 listen_addr      = "0.0.0.0:${AGENT_PORT}"
 public_url       = "${public_url}"
-broadcast_mode   = "server"
 EOF
   [[ -n "$defi_mcp_url" ]] || fail "SVPCHAIN_DEFI_MCP_URL is required"
   cat <<EOF
@@ -580,132 +446,16 @@ base_url = "${llm_base_url}"
 model = "${llm_model}"
 api_key_env = "${llm_api_key_env}"
 EOF
-  [[ -n "$faucet_url" ]] && echo "faucet_base_url         = \"${faucet_url}\""
-  # Persist per-symbol transfer-out caps on the agent's own writable data
-  # volume (the config dir holds only read-only mounts) — the path is under the
-  # agent's name because that is what the compose service mounts
-  # ${install_dir}/data onto. See render_compose_yaml.
-  echo "transfer_out_cap_path   = \"/var/lib/${AGENT_NAME}/transfer-out-caps.json\""
   cat <<EOF
 
 [dex_chain]
 id               = "${chain_id}"
-grpc_addr        = "${grpc_addr}"
-comet_rpc_url    = "${comet_rpc}"
-indexer_base_url = "${indexer}"
+evm_rpc_url      = "${evm_rpc}"
 EOF
-  # Every family this binary serves lands as an EVM tx; main.go's
-  # cfg.RequireEVM refuses to boot without this endpoint.
-  [[ -n "$evm_rpc" ]] && echo "evm_rpc_url      = \"${evm_rpc}\""
-  # A separate chain carrying x/agent + x/agentwallet, reached over its
-  # Cosmos REST API; unset, the agent-identity families run against the DEX
-  # chain connection.
-  if [[ -n "$agent_chain_id" || -n "$agent_chain_rest" ]]; then
-    [[ -n "$agent_chain_id" && -n "$agent_chain_rest" ]] || \
-      fail "--agent-chain-id and --agent-chain-rest must be set together"
-    echo ""
-    echo "[agent_chain]"
-    echo "id       = \"${agent_chain_id}\""
-    echo "rest_url = \"${agent_chain_rest}\""
-  fi
-  # Per-protocol contract bindings on the DEX chain's EVM side; each family
-  # renders only when configured, mirroring internal/config's optionality.
-  if [[ -n "$evm_uniswap_router" ]]; then
-    echo ""
-    echo "[evm.swap]"
-    echo "uniswap_router_addr = \"${evm_uniswap_router}\""
-    echo "wsvp_addr           = \"${evm_wsvp}\""
-    [[ -z "$evm_uniswap_factory" ]] || echo "factory_addr        = \"${evm_uniswap_factory}\""
-  fi
-  if [[ -n "$evm_assets" ]]; then
-    local saved_ifs="$IFS" spec id address decimals extra
-    IFS=';'
-    for spec in $evm_assets; do
-      [[ -n "$spec" ]] || continue
-      IFS=',' read -r id address decimals extra <<< "$spec"
-      if [[ -z "$id" || -z "$address" || -z "$decimals" || -n "$extra" || ! "$id" =~ ^[A-Za-z0-9._-]+$ || ! "$address" =~ ^0x[0-9A-Fa-f]{40}$ || ! "$decimals" =~ ^[0-9]+$ ]]; then
-        IFS="$saved_ifs"
-        fail "invalid EVM asset; expected id,0x-address,decimals"
-      fi
-      echo ""
-      echo "[[evm.asset]]"
-      echo "id       = \"${id}\""
-      echo "address  = \"${address}\""
-      echo "decimals = ${decimals}"
-    done
-    IFS="$saved_ifs"
-  fi
-  if [[ -n "$evm_oracle" ]]; then
-    echo ""
-    echo "[evm.oracle]"
-    echo "feed_addr = \"${evm_oracle}\""
-  fi
-  # routes_path is left relative on purpose: core resolves it against the
-  # agent.toml directory, so it finds the registry mounted beside the config.
-  # Core loads it at startup and fails the boot if it is missing or has no
-  # route out of source_chain_id — which is why the deploy ships it.
-  if [[ -n "$evm_bridge_addr" && -n "$evm_bridge_routes" && -n "$evm_bridge_source_chain_id" ]]; then
-    echo ""
-    echo "[evm.bridge]"
-    echo "addr            = \"${evm_bridge_addr}\""
-    echo "routes_path     = \"${evm_bridge_routes}\""
-    echo "source_chain_id = ${evm_bridge_source_chain_id}"
-    emit_foreign_chains
-  elif [[ -n "$evm_bridge_routes" ]]; then
-    echo "# WARNING: --evm-bridge-routes set but evm_bridge_addr / evm_bridge_source_chain_id are empty;" >&2
-    echo "#          bridge omitted (config requires all three)." >&2
-  fi
-  cat <<EOF
-
-[cache]
-markets_refresh = "${markets_refresh}"
-EOF
-  if [[ -n "${deposit_max}${withdraw_max}${transfer_max}${daily_withdraw_cap}" ]]; then
-    echo ""
-    echo "[limits]"
-    [[ -n "$deposit_max"        ]] && echo "deposit_max_usdc        = ${deposit_max}"
-    [[ -n "$withdraw_max"       ]] && echo "withdraw_max_usdc       = ${withdraw_max}"
-    [[ -n "$transfer_max"       ]] && echo "transfer_max_usdc       = ${transfer_max}"
-    [[ -n "$daily_withdraw_cap" ]] && echo "daily_withdraw_cap_usdc = ${daily_withdraw_cap}"
-  fi
   # No [operator] table. internal/config has no field for a signing key —
   # "It never loads a caller or operator signing key" — and unknown keys are
   # ignored rather than rejected, so emitting one would be a line that reads
   # like configuration and does nothing.
-}
-
-# render_routes_json — the SVPBridge route registry, identical to the one the
-# MCP deploy ships (the two services read the same whitelist). Zero addresses
-# denote the native coin; decimals are the source asset's.
-render_routes_json() {
-  cat <<'ROUTES'
-[
-  {"srcChain":"arbitrum_sepolia","srcChainId":421614,"targetChain":"svp_chain","targetChainId":2517,"srcToken":"0x0000000000000000000000000000000000000000","targetToken":"0x1c12dbda863900c680a3836c53d408feaf63f0ba","symbol":"WETH","decimals":18},
-  {"srcChain":"arbitrum_sepolia","srcChainId":421614,"targetChain":"svp_chain","targetChainId":2517,"srcToken":"0x7a8EcFa70374c1B8702CB98aaf23dE19675981d6","targetToken":"0x0000000000000000000000000000000000000000","symbol":"SVP","decimals":18},
-  {"srcChain":"arbitrum_sepolia","srcChainId":421614,"targetChain":"svp_chain","targetChainId":2517,"srcToken":"0xc2bda8290a2e01984da81acf7e2d6ec9b14d7b10","targetToken":"0x8787384b8640f6e9c30e94585d3d62b03f80a5df","symbol":"WBNB","decimals":18},
-  {"srcChain":"arbitrum_sepolia","srcChainId":421614,"targetChain":"svp_chain","targetChainId":2517,"srcToken":"0xd10d01ebf3cb825da77a025b1d861e7ae5370c20","targetToken":"0x6c22ceb0852bd7781b57574aaa5de0f22cd44162","symbol":"WBTC","decimals":8},
-  {"srcChain":"arbitrum_sepolia","srcChainId":421614,"targetChain":"svp_chain","targetChainId":2517,"srcToken":"0x75faf114eafb1bdbe2f0316df893fd58ce46aa4d","targetToken":"0x732f6ea7afd5edc02e7ba052075dd0780e285489","symbol":"USDC","decimals":6},
-  {"srcChain":"arbitrum_sepolia","srcChainId":421614,"targetChain":"svp_chain","targetChainId":2517,"srcToken":"0xfa9857651febd22c0a76c958adb25b4af0370688","targetToken":"0x013a61e622e6abfcab64f52d274c3fc0aa37f951","symbol":"USDV","decimals":6},
-  {"srcChain":"sepolia","srcChainId":11155111,"targetChain":"svp_chain","targetChainId":2517,"srcToken":"0x0000000000000000000000000000000000000000","targetToken":"0x1c12dbda863900c680a3836c53d408feaf63f0ba","symbol":"WETH","decimals":18},
-  {"srcChain":"sepolia","srcChainId":11155111,"targetChain":"svp_chain","targetChainId":2517,"srcToken":"0x16B065D7519D5C1c53eff6ed5AE732E90d602A00","targetToken":"0x0000000000000000000000000000000000000000","symbol":"SVP","decimals":18},
-  {"srcChain":"sepolia","srcChainId":11155111,"targetChain":"svp_chain","targetChainId":2517,"srcToken":"0x1c7d4b196cb0c7b01d743fbc6116a902379c7238","targetToken":"0x732f6ea7afd5edc02e7ba052075dd0780e285489","symbol":"USDC","decimals":6},
-  {"srcChain":"sepolia","srcChainId":11155111,"targetChain":"svp_chain","targetChainId":2517,"srcToken":"0x93e719f5458d112804122952033103f2eb349eac","targetToken":"0x013a61e622e6abfcab64f52d274c3fc0aa37f951","symbol":"USDV","decimals":6},
-  {"srcChain":"sepolia","srcChainId":11155111,"targetChain":"svp_chain","targetChainId":2517,"srcToken":"0x9d45d6a420fbaf77a46a4822ef967d62a69dc7f8","targetToken":"0x6c22ceb0852bd7781b57574aaa5de0f22cd44162","symbol":"WBTC","decimals":8},
-  {"srcChain":"sepolia","srcChainId":11155111,"targetChain":"svp_chain","targetChainId":2517,"srcToken":"0xf174007a92ae5cdfecfa85c94c5105e4851734d6","targetToken":"0x8787384b8640f6e9c30e94585d3d62b03f80a5df","symbol":"WBNB","decimals":18},
-  {"srcChain":"svp_chain","srcChainId":2517,"targetChain":"arbitrum_sepolia","targetChainId":421614,"srcToken":"0x0000000000000000000000000000000000000000","targetToken":"0x7a8EcFa70374c1B8702CB98aaf23dE19675981d6","symbol":"SVP","decimals":18},
-  {"srcChain":"svp_chain","srcChainId":2517,"targetChain":"arbitrum_sepolia","targetChainId":421614,"srcToken":"0x013a61e622e6abfcab64f52d274c3fc0aa37f951","targetToken":"0xfa9857651febd22c0a76c958adb25b4af0370688","symbol":"USDV","decimals":6},
-  {"srcChain":"svp_chain","srcChainId":2517,"targetChain":"arbitrum_sepolia","targetChainId":421614,"srcToken":"0x1c12dbda863900c680a3836c53d408feaf63f0ba","targetToken":"0x0000000000000000000000000000000000000000","symbol":"WETH","decimals":18},
-  {"srcChain":"svp_chain","srcChainId":2517,"targetChain":"arbitrum_sepolia","targetChainId":421614,"srcToken":"0x6c22ceb0852bd7781b57574aaa5de0f22cd44162","targetToken":"0xd10d01ebf3cb825da77a025b1d861e7ae5370c20","symbol":"WBTC","decimals":8},
-  {"srcChain":"svp_chain","srcChainId":2517,"targetChain":"arbitrum_sepolia","targetChainId":421614,"srcToken":"0x732f6ea7afd5edc02e7ba052075dd0780e285489","targetToken":"0x75faf114eafb1bdbe2f0316df893fd58ce46aa4d","symbol":"USDC","decimals":6},
-  {"srcChain":"svp_chain","srcChainId":2517,"targetChain":"arbitrum_sepolia","targetChainId":421614,"srcToken":"0x8787384b8640f6e9c30e94585d3d62b03f80a5df","targetToken":"0xc2bda8290a2e01984da81acf7e2d6ec9b14d7b10","symbol":"WBNB","decimals":18},
-  {"srcChain":"svp_chain","srcChainId":2517,"targetChain":"sepolia","targetChainId":11155111,"srcToken":"0x0000000000000000000000000000000000000000","targetToken":"0x16B065D7519D5C1c53eff6ed5AE732E90d602A00","symbol":"SVP","decimals":18},
-  {"srcChain":"svp_chain","srcChainId":2517,"targetChain":"sepolia","targetChainId":11155111,"srcToken":"0x013a61e622e6abfcab64f52d274c3fc0aa37f951","targetToken":"0x93e719f5458d112804122952033103f2eb349eac","symbol":"USDV","decimals":6},
-  {"srcChain":"svp_chain","srcChainId":2517,"targetChain":"sepolia","targetChainId":11155111,"srcToken":"0x1c12dbda863900c680a3836c53d408feaf63f0ba","targetToken":"0x0000000000000000000000000000000000000000","symbol":"WETH","decimals":18},
-  {"srcChain":"svp_chain","srcChainId":2517,"targetChain":"sepolia","targetChainId":11155111,"srcToken":"0x6c22ceb0852bd7781b57574aaa5de0f22cd44162","targetToken":"0x9d45d6a420fbaf77a46a4822ef967d62a69dc7f8","symbol":"WBTC","decimals":8},
-  {"srcChain":"svp_chain","srcChainId":2517,"targetChain":"sepolia","targetChainId":11155111,"srcToken":"0x732f6ea7afd5edc02e7ba052075dd0780e285489","targetToken":"0x1c7d4b196cb0c7b01d743fbc6116a902379c7238","symbol":"USDC","decimals":6},
-  {"srcChain":"svp_chain","srcChainId":2517,"targetChain":"sepolia","targetChainId":11155111,"srcToken":"0x8787384b8640f6e9c30e94585d3d62b03f80a5df","targetToken":"0xf174007a92ae5cdfecfa85c94c5105e4851734d6","symbol":"WBNB","decimals":18}
-]
-ROUTES
 }
 
 # render_compose_yaml — emit the docker-compose.yml that runs this agent: the
@@ -738,20 +488,6 @@ render_compose_yaml() {
       - ${install_dir}/agent.toml:/etc/${AGENT_NAME}/agent.toml:ro
       - ${install_dir}/data:/var/lib/${AGENT_NAME}
 EOF
-  # The route registry, mounted beside the config so the config-dir-relative
-  # routes_path resolves. Empty only when --evm-bridge-routes is absolute
-  # (operator-managed) or the bridge is unconfigured.
-  #
-  # This stays LAST among the volumes: the operator-key secret below closes the
-  # service block and opens a top-level one, so anything emitted after it would
-  # land outside the service and yield a compose file that does not parse.
-  if [[ -n "$bridge_routes_basename" ]]; then
-    echo "      - ${install_dir}/${bridge_routes_basename}:/etc/${AGENT_NAME}/${bridge_routes_basename}:ro"
-  fi
-  # An explicit if, not `[[ … ]] && echo`: a false test as the last command
-  # would make the function return non-zero, and under `set -e` the
-  # `render_compose_yaml > file` call site would exit the script silently.
-  #
 }
 
 require_install_args() {
@@ -1108,33 +844,20 @@ if [[ "$mode" == "print-env" ]]; then
   # rather than an associative array, because macOS still ships bash 3.2.
   env_names=(
     SVPCHAIN_CONFIG_DIR SVPCHAIN_DEPLOY_HOST SVPCHAIN_DEPLOY_JUMP_BOX SVPCHAIN_CHAIN_ID SVPCHAIN_GRPC_ADDR
-    SVPCHAIN_COMET_RPC SVPCHAIN_INDEXER SVPCHAIN_AGENT_CHAIN_ID
-    SVPCHAIN_AGENT_CHAIN_REST SVPCHAIN_EVM_AGENT_PUBLIC_URL
+    SVPCHAIN_AGENT_CHAIN_ID SVPCHAIN_AGENT_CHAIN_REST SVPCHAIN_EVM_AGENT_PUBLIC_URL
     SVPCHAIN_EVM_AGENT_OWNER_KEY SVPCHAIN_REGISTER_GRPC SVPCHAIN_REGISTER_RPC SVPCHAIN_OPERATOR_CAPABILITIES
     SVPCHAIN_OPERATOR_METADATA SVPCHAIN_AGENT_PRICING_AMOUNT
-    SVPCHAIN_AGENT_PRICING_UNIT SVPCHAIN_EVM_RPC SVPCHAIN_EVM_UNISWAP_ROUTER
-    SVPCHAIN_EVM_WSVP SVPCHAIN_EVM_UNISWAP_FACTORY SVPCHAIN_EVM_ASSETS SVPCHAIN_EVM_ORACLE SVPCHAIN_EVM_BRIDGE
-    SVPCHAIN_EVM_BRIDGE_ROUTES SVPCHAIN_EVM_BRIDGE_ROUTES_SRC
-    SVPCHAIN_EVM_BRIDGE_SOURCE_CHAIN_ID SVPCHAIN_EVM_FOREIGN_CHAINS
-    SVPCHAIN_FAUCET_URL SVPCHAIN_MARKETS_REFRESH
-    SVPCHAIN_DEPOSIT_MAX_USDC SVPCHAIN_WITHDRAW_MAX_USDC
-    SVPCHAIN_TRANSFER_MAX_USDC SVPCHAIN_DAILY_WITHDRAW_CAP_USDC
-    SVPCHAIN_INSTALL_DIR
+    SVPCHAIN_AGENT_PRICING_UNIT SVPCHAIN_EVM_RPC SVPCHAIN_DEFI_MCP_URL
+    SVPCHAIN_EVM_AGENT_LLM_PROVIDER SVPCHAIN_EVM_AGENT_LLM_BASE_URL
+    SVPCHAIN_EVM_AGENT_LLM_MODEL SVPCHAIN_EVM_AGENT_LLM_API_KEY SVPCHAIN_INSTALL_DIR
   )
   env_values=(
     "$config_dir" "$host" "$jump_box" "$chain_id" "$grpc_addr"
-    "$comet_rpc" "$indexer" "$agent_chain_id"
-    "$agent_chain_rest" "$public_url"
+    "$agent_chain_id" "$agent_chain_rest" "$public_url"
     "$owner_key" "$register_grpc" "$register_rpc" "$operator_capabilities"
     "$operator_metadata" "$pricing_amount"
-    "$pricing_unit" "$evm_rpc" "$evm_uniswap_router"
-    "$evm_wsvp" "$evm_uniswap_factory" "$evm_assets" "$evm_oracle" "$evm_bridge_addr"
-    "$evm_bridge_routes" "$evm_bridge_routes_src"
-    "$evm_bridge_source_chain_id" "$evm_foreign_chains"
-    "$faucet_url" "$markets_refresh"
-    "$deposit_max" "$withdraw_max"
-    "$transfer_max" "$daily_withdraw_cap"
-    "$install_dir"
+    "$pricing_unit" "$evm_rpc" "$defi_mcp_url"
+    "$llm_provider" "$llm_base_url" "$llm_model" "${SVPCHAIN_EVM_AGENT_LLM_API_KEY:-}" "$install_dir"
   )
 
   if [[ "$use_config" == "1" && -f "${config_dir}/config.sh" ]]; then
@@ -1159,7 +882,7 @@ if [[ "$mode" == "print-env" ]]; then
     # from "the command substitution returned nothing". Trimmed but NOT
     # validated: a malformed key should still be diagnosable here rather than
     # aborting the one mode you would reach for to diagnose it.
-    if [[ "$name" == "SVPCHAIN_EVM_AGENT_OWNER_KEY" ]]; then
+    if [[ "$name" == "SVPCHAIN_EVM_AGENT_OWNER_KEY" || "$name" == "SVPCHAIN_EVM_AGENT_LLM_API_KEY" ]]; then
       value="$(printf '%s' "$value" | tr -d '[:space:]')"
       if [[ -n "$value" ]]; then value="set (${#value} chars)"; else value="unset"; fi
     fi
@@ -1174,10 +897,6 @@ fi
 # ---- mode: print-config ---------------------------------------------------
 
 if [[ "$mode" == "print-config" ]]; then
-  # Preview the agent.toml this deploy would ship, [operator] block included
-  # when the environment supplies a key. The key material is never in this
-  # file — it ships as a separate compose secret.
-  resolve_owner_key
   render_agent_toml
   exit 0
 fi
@@ -1186,19 +905,9 @@ fi
 
 if [[ "$mode" == "print-compose" ]]; then
   # Preview the docker-compose.yml. Uses a placeholder install_dir/image when
-  # not resolved, and shows the secrets block when a key is configured. The key
-  # itself is not here either — the block points at the file the deploy stages.
-  resolve_owner_key
-  resolve_bridge_routes
+  # not resolved.
   image_ref="${IMAGE_REPO}:${image_tag:-<tag>}"
   render_compose_yaml
-  exit 0
-fi
-
-# ---- mode: print-routes ---------------------------------------------------
-
-if [[ "$mode" == "print-routes" ]]; then
-  render_routes_json
   exit 0
 fi
 
@@ -1233,14 +942,8 @@ require_cmd rsync
 require_cmd ssh
 require_cmd go
 
-# Resolve the operator key path and any --evm-bridge-routes-src (both against
-# the operator's CWD, before any cd) and validate them. The key's presence was
-# already required above; this is what checks it is actually a key.
+# Validate the optional owner key before any deployment action.
 resolve_owner_key
-resolve_bridge_routes
-if [[ -n "$evm_bridge_addr" && -z "$bridge_routes_basename" ]]; then
-  info "bridge: evm_bridge_routes is absolute ($evm_bridge_routes) — not auto-shipping; ensure that path exists on $host."
-fi
 
 REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "$REPO_DIR"
@@ -1314,15 +1017,6 @@ trap 'rm -rf "$stage_dir"' EXIT
 
 render_agent_toml   > "$stage_dir/agent.toml"
 render_compose_yaml > "$stage_dir/docker-compose.yml"
-# The route registry: --evm-bridge-routes-src when given, otherwise the
-# built-in whitelist. Core reads it at boot, so it must land with the config.
-if [[ -n "$bridge_routes_basename" ]]; then
-  if [[ -n "$bridge_routes_src_abs" ]]; then
-    cp "$bridge_routes_src_abs" "$stage_dir/$bridge_routes_basename"
-  else
-    render_routes_json > "$stage_dir/$bridge_routes_basename"
-  fi
-fi
 chmod 600 "$stage_dir"/*
 chmod 755 "$stage_dir"
 

@@ -15,7 +15,7 @@ import (
 // see cmd/dex-bench/cosmos_signing.go:60-75 for the standard-SDK helper
 // (tx.SignWithPrivKey) call — but here we stop short of producing the
 // signature so the local signer can sign these bytes locally and round-trip
-// the result back into broadcast_signed_tx.
+// the result before broadcasting a registration transaction.
 func DirectSignBytes(bodyBytes, authInfoBytes []byte, chainID string, accountNumber uint64) ([]byte, error) {
 	signDoc := &tx.SignDoc{
 		BodyBytes:     bodyBytes,

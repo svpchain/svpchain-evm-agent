@@ -1,11 +1,6 @@
-// Command svpchain-evm-agent is the EVM DeFi A2A agent for SVP-Chain: swap
-// quoting and building, bridge deposits, ERC-20/721 transfers and approvals,
-// raw EVM broadcast, self-service auth, and faucet. It is non-custodial:
-// callers sign every built transaction with their own local signer.
-//
-// Everything it serves is implemented under internal/, which was the shared
-// svpchain-agent-core library until that repo was retired. The perps and
-// Lendora families live in their own binaries.
+// Command svpchain-evm-agent is the public EVM A2A relay for SVP-Chain. It
+// proxies its private DeFi MCP catalog and serves authentication, caller-signed
+// transaction broadcast, and transaction-status operations.
 package main
 
 import (
@@ -54,7 +49,7 @@ func run(ctx context.Context, configPath string) error {
 	if err := cfg.RequireEVM(); err != nil {
 		return err
 	}
-	app, err := wire.BuildProfile(ctx, cfg, wire.EVMProfile)
+	app, err := wire.Build(ctx, cfg)
 	if err != nil {
 		return err
 	}

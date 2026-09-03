@@ -52,12 +52,17 @@ import (
 	agenttypes "github.com/dydxprotocol/v4-chain/protocol/x/agent/types"
 
 	"github.com/svpchain/svpchain-evm-agent/internal/agentchain"
-	"github.com/svpchain/svpchain-evm-agent/internal/config"
 	"github.com/svpchain/svpchain-evm-agent/internal/owner"
 )
 
 // cardPath is the A2A well-known location; a2asrv serves the card there.
 const cardPath = "/.well-known/agent-card.json"
+
+const (
+	defaultFeeDenom    = "asvp"
+	defaultFeeAmount   = "25000000000000000"
+	defaultFeeGasLimit = uint64(1_000_000)
+)
 
 type opts struct {
 	url           string
@@ -91,9 +96,9 @@ func main() {
 	flag.StringVar(&o.metadata, "metadata", "", "opaque owner metadata; empty leaves an existing value alone")
 	flag.StringVar(&o.pricingAmount, "pricing-amount", "", "advertised price in the network settlement token's base units; requires -pricing-unit")
 	flag.StringVar(&o.pricingUnit, "pricing-unit", "call", "advertised price unit, such as call; requires -pricing-amount")
-	flag.StringVar(&o.feeDenom, "fee-denom", config.DefaultFeeDenom, "fee denom")
-	flag.StringVar(&o.feeAmount, "fee-amount", config.DefaultFeeAmount, "fee amount")
-	flag.Uint64Var(&o.gasLimit, "gas-limit", config.DefaultFeeGasLimit, "gas limit")
+	flag.StringVar(&o.feeDenom, "fee-denom", defaultFeeDenom, "fee denom")
+	flag.StringVar(&o.feeAmount, "fee-amount", defaultFeeAmount, "fee amount")
+	flag.Uint64Var(&o.gasLimit, "gas-limit", defaultFeeGasLimit, "gas limit")
 	flag.BoolVar(&o.dryRun, "dry-run", false, "print what would be submitted and exit without broadcasting")
 	flag.DurationVar(&o.timeout, "timeout", 90*time.Second, "deadline for the whole exchange")
 	flag.Parse()

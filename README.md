@@ -1,14 +1,14 @@
 # svpchain-evm-agent
 
 `svpchain-evm-agent` is a non-custodial remote A2A service for SVP-Chain EVM
-operations. It discovers swap pairs and token addresses, obtains live swap quotes, builds
-EVM transactions, and broadcasts transactions that the caller has signed
-locally. It never receives a user's private key and cannot execute a user
-transaction on the user's behalf.
+operations. It synchronizes a private DeFi MCP catalog at startup, exposes that
+catalog through A2A, and broadcasts EVM transactions that callers sign locally.
+It never receives a user's private key and cannot execute a user transaction on
+the user's behalf.
 
-Supported EVM tools include swap quotes and builds, bridge deposits, ERC-20 and
-ERC-721 transfers and approvals, raw EVM broadcast/status, contract discovery,
-self-service authentication, and the testnet faucet.
+Its own public tools are `auth_challenge`, `auth_verify`,
+`broadcast_evm_tx`, `evm_tx_status`, and `list_tools`. DeFi tools are supplied
+by the private MCP service and frozen into the Agent Card when the agent starts.
 
 ## Write flow
 
@@ -16,12 +16,13 @@ Every state-changing operation follows the same path:
 
 ```text
 auth_challenge -> local sign_challenge -> auth_verify
-  -> build_* -> local sign_evm_transaction -> broadcast_evm_tx
+  -> private DeFi MCP build_* -> local sign_evm_transaction -> broadcast_evm_tx
 ```
 
-`build_*` returns an `EVMTxPayload`; the local signer owned by the caller signs
-it. `broadcast_evm_tx` verifies that the recovered EVM sender is the authenticated
-owner before sending it to the configured RPC. EVM gas is paid by that caller.
+`build_*` returns an EVM transaction payload; the local signer owned by the
+caller signs it. `broadcast_evm_tx` verifies that the recovered EVM sender is
+the authenticated owner before sending it to the configured RPC. EVM gas is
+paid by that caller.
 
 The local `svpchain-agent` already provides `sign_challenge` and
 `sign_evm_transaction`. Its signer must be configured for the same Cosmos and
@@ -33,14 +34,9 @@ EVM chain as this service.
 go run ./cmd/svpchain-evm-agent -config cmd/svpchain-evm-agent/agent.toml.example
 ```
 
-`dex_chain.evm_rpc_url` is required. The other EVM families are optional: an
-unset swap, bridge, oracle, or faucet configuration only disables its related
-tools.
-
-Use `[[evm.asset]]` for stable ERC-20 convenience names such as `usdc`; it is
-only an address/decimals mapping, not a method allowlist. The token may still
-be supplied as a raw `0x` address, while Swap pairs continue to be discovered
-dynamically from the configured Factory.
+`dex_chain.evm_rpc_url` and `defi_mcp.url` are required. Contract addresses,
+token aliases, bridge routes, and faucet settings are configured exclusively in
+the private DeFi MCP service.
 
 The agent card is served at `/.well-known/agent-card.json`; `/healthz` is the
 liveness endpoint.
@@ -55,21 +51,18 @@ The script starts the local chain when needed and builds the EVM agent. Use
 `stop`, `status`, `logs`, and `config` to inspect the service.
 
 The local configuration is the complete source for the generated `agent.toml`,
-including chain endpoints and EVM feature bindings:
+including the EVM RPC, private DeFi MCP endpoint, and LLM configuration:
 
 ```sh
 cp scripts/local-evm-agent.toml.example local-evm-agent.toml
-# Fill in the addresses from the local EVM deployment.
+# Set the private MCP endpoint and LLM environment-variable name.
 ./scripts/local-evm-agent.sh config
 ```
 
 `local-evm-agent.toml` contains `listen_addr`, `public_url`, `[dex_chain]`,
-and optional `faucet_base_url`, `[evm.swap]`, `[[evm.asset]]`, `[evm.oracle]`,
-and `[evm.bridge]` sections. Pass `--config-file PATH` or set
+`[defi_mcp]`, and `[llm]` sections. Contract addresses, token aliases and
+faucet configuration belong to the private DeFi MCP deployment. Pass `--config-file PATH` or set
 `EVM_AGENT_LOCAL_CONFIG_FILE` for a different full configuration file.
-Existing ignored `contracts.toml` files are used as a compatibility fallback
-until the new file is created; remove obsolete `[[evm.contract]]` entries when
-migrating because the current agent ignores them.
 
 When a local Docker service consumes the agent, use
 `http://host.docker.internal:8083` as `public_url`, not `localhost`. The local
@@ -100,8 +93,8 @@ different local fixture. `register --dry-run` never transfers funds.
 
 ## Deployment
 
-`scripts/deploy.sh` builds and ships the container, configuration, bridge
-routes, and reverse-proxy snippet. A normal install does not need an owner key
+`scripts/deploy.sh` builds and ships the container, configuration, and
+reverse-proxy snippet. A normal install does not need an owner key
 on the remote host: the agent never signs transactions. After the public URL is
 live, `--register` fetches its Agent Card, then signs and broadcasts the
 registration locally with the owner key in the local config directory.
@@ -121,6 +114,5 @@ validates the Card and registration request without broadcasting.
 
 ## Development notes
 
-The repository embeds the relevant MCP builders and handlers in `internal/mcp`.
-`deps_test.go` checks that this module's replace directives match the local
-protocol checkout, keeping Cosmos/EVM dependencies aligned with the chain.
+The private DeFi implementation belongs to `svpchain-defi-mcp`. This repository
+contains only the A2A relay, its MCP client, and registration helpers.

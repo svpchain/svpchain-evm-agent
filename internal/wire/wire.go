@@ -1,287 +1,53 @@
-// Package wire assembles the agent's dependency graph from its config: chain
-// gRPC + CometBFT + EVM clients, the indexer client, the markets caches, the
-// self-service auth stores, the policy engine, and the MCP tool handlers the
-// A2A tool bridge dispatches into.
-//
-// The body deliberately mirrors the wiring in svpchain-mcp's cmd/mcp-server:
-// same optional families, same all-or-nothing rules, same graceful
-// degradation. Drift between the two is a bug in whichever copied last — and
-// now that internal/mcp is a fork of that repo's lib/mcp rather than a
-// dependency on it (see internal/mcp/doc.go), nothing makes the drift fail
-// loudly. Check both when changing either.
+// Package wire builds the intentionally small public EVM Agent surface.
 package wire
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"strconv"
-	"strings"
 
-	"cosmossdk.io/log"
-	"github.com/ethereum/go-ethereum/common"
-	"google.golang.org/grpc"
-
-	"github.com/svpchain/svpchain-evm-agent/internal/mcp/auth"
-	"github.com/svpchain/svpchain-evm-agent/internal/mcp/bridge"
-	"github.com/svpchain/svpchain-evm-agent/internal/mcp/builder"
-	"github.com/svpchain/svpchain-evm-agent/internal/mcp/chain"
-	"github.com/svpchain/svpchain-evm-agent/internal/mcp/faucet"
-	"github.com/svpchain/svpchain-evm-agent/internal/mcp/indexer"
-	"github.com/svpchain/svpchain-evm-agent/internal/mcp/limits"
-	"github.com/svpchain/svpchain-evm-agent/internal/mcp/mcpcodec"
-	"github.com/svpchain/svpchain-evm-agent/internal/mcp/policy"
-	"github.com/svpchain/svpchain-evm-agent/internal/mcp/tools"
-
+	"github.com/svpchain/svpchain-evm-agent/internal/agenttools"
 	"github.com/svpchain/svpchain-evm-agent/internal/config"
+	"github.com/svpchain/svpchain-evm-agent/internal/mcp/auth"
 	"github.com/svpchain/svpchain-evm-agent/internal/toolbridge"
 )
 
-// App is the wired agent: everything the A2A server needs to serve requests,
-// plus the background caches it must run.
 type App struct {
-	Handlers *tools.Handlers      // the MCP tool handlers
-	Registry *toolbridge.Registry // A2A operation registry over them
+	Registry *toolbridge.Registry
+	Tools    *agenttools.Service
 	Tenants  *auth.DynamicTenantStore
-	Sessions *auth.SessionBearers
-	Indexer  *indexer.Client
-	GrpcConn *grpc.ClientConn
-	Logger   log.Logger
 }
 
-// Close releases the app's long-lived connections.
 func (a *App) Close() {
-	if a.GrpcConn != nil {
-		_ = a.GrpcConn.Close()
+	if a.Tools != nil {
+		a.Tools.Close()
 	}
 }
+func (a *App) Run(ctx context.Context) error { <-ctx.Done(); return nil }
 
-// Run blocks until ctx is cancelled.
-//
-// This binary starts no background cache refreshers, so there is nothing here
-// that can fail. The CLOB markets cache prices perp metadata this agent never
-// serves, and the Lendora cache went with the Lendora surface — an EVM DeFi
-// agent quotes and builds against live contract calls, not a cached snapshot.
-func (a *App) Run(ctx context.Context) error {
-	<-ctx.Done()
-	return nil
-}
-
-// dynamicTenantAdapter converts auth.TenantRecord into policy.TenantPolicy so
-// the policy engine can resolve auto-issued tenants; kept here so auth never
-// imports policy (mirrors the mcp-server adapter).
-type dynamicTenantAdapter struct{ store *auth.DynamicTenantStore }
-
-func (a dynamicTenantAdapter) LookupTenantPolicy(tenantID string) (policy.TenantPolicy, bool) {
-	rec, err := a.store.LookupByTenantID(tenantID)
+func Build(ctx context.Context, cfg *config.Config) (*App, error) {
+	if err := cfg.RequireEVM(); err != nil {
+		return nil, err
+	}
+	nonces := auth.NewNonceStore(auth.DefaultChallengeTTL, nil)
+	tenants := auth.NewDynamicTenantStore(auth.DynamicTenantStoreConfig{BearerTTL: auth.DefaultBearerTTL}, nil)
+	service, err := agenttools.New(cfg.DEXChain.ID, cfg.DEXChain.EVMRPCURL, nonces, tenants)
 	if err != nil {
-		return policy.TenantPolicy{}, false
+		return nil, err
 	}
-	return policy.TenantPolicy{
-		TenantID:           rec.TenantID,
-		Owner:              rec.Owner,
-		AllowedSubaccounts: rec.AllowedSubaccounts,
-		KillSwitch:         rec.KillSwitch,
-	}, true
-}
-
-// BuildProfile wires the configuration into a ready-to-run App registering
-// only the profile's operation families.
-func BuildProfile(ctx context.Context, cfg *config.Config, p Profile) (*App, error) {
-	logger := log.NewLogger(os.Stderr).With("module", "remote-agent", "profile", p.Name)
-
-	grpcConn, err := chain.Dial(ctx, cfg.DEXChain.GrpcAddr)
-	if err != nil {
-		return nil, fmt.Errorf("dial chain gRPC: %w", err)
-	}
-	encCfg := mcpcodec.GetEncodingConfig()
-
-	chainDeps := tools.ChainDeps{
-		Account:         chain.NewAccountClient(grpcConn, encCfg.InterfaceRegistry),
-		Broadcast:       chain.NewBroadcastClient(grpcConn),
-		ClobQuery:       chain.NewClobQueryClient(grpcConn),
-		PerpetualsQuery: chain.NewPerpetualsQueryClient(grpcConn),
-		SubaccountQuery: chain.NewSubaccountQueryClient(grpcConn),
-		BankQuery:       chain.NewBankQueryClient(grpcConn),
-	}
-	cometClient, err := chain.NewCometBftClient(cfg.DEXChain.CometRPCURL)
-	if err != nil {
-		grpcConn.Close()
-		return nil, fmt.Errorf("cometbft client: %w", err)
-	}
-	chainDeps.CometBft = cometClient
-
-	// The EVM family is this binary's whole reason to exist, so main.go calls
-	// cfg.RequireEVM() before wiring: an unset dex_chain.evm_rpc_url is a boot
-	// failure here, not a call-time refusal. The guard below therefore never
-	// fails in a real deployment; it stays so wire is still callable from tests
-	// with a bare config, and so a half-configured tree degrades to refusals
-	// rather than a nil dereference.
-	var evmDeps tools.EVMDeps
-	if cfg.DEXChain.EVMRPCURL != "" {
-		evmClient, err := chain.NewEVMClient(ctx, cfg.DEXChain.EVMRPCURL)
-		if err != nil {
-			grpcConn.Close()
-			return nil, fmt.Errorf("evm client: %w", err)
-		}
-		chainDeps.EVM = evmClient
-		evmDeps = tools.EVMDeps{Assembler: builder.NewEVMAssembler(evmClient)}
-		if len(cfg.EVM.Assets) > 0 {
-			evmDeps.Assets = make(map[string]tools.ConfiguredEVMAsset, len(cfg.EVM.Assets))
-			for _, asset := range cfg.EVM.Assets {
-				evmDeps.Assets[strings.ToLower(strings.TrimSpace(asset.ID))] = tools.ConfiguredEVMAsset{
-					Address:  asset.Address,
-					Decimals: asset.Decimals,
-				}
-			}
-		}
-
-		if cfg.EVM.Swap.UniswapRouterAddr != "" {
-			uni, err := builder.NewUniswapV2(
-				common.HexToAddress(cfg.EVM.Swap.UniswapRouterAddr),
-				common.HexToAddress(cfg.EVM.Swap.WSVPAddr),
-			)
-			if err != nil {
-				grpcConn.Close()
-				return nil, fmt.Errorf("uniswap binding: %w", err)
-			}
-			evmDeps.Uniswap = uni
-		}
-		if cfg.EVM.Swap.FactoryAddr != "" {
-			factory, err := builder.NewUniswapV2Factory(common.HexToAddress(cfg.EVM.Swap.FactoryAddr))
-			if err != nil {
-				grpcConn.Close()
-				return nil, fmt.Errorf("uniswap factory binding: %w", err)
-			}
-			evmDeps.UniswapFactory = factory
-		}
-		if cfg.EVM.Oracle.FeedAddr != "" {
-			oracle, err := builder.NewOracleFeed(common.HexToAddress(cfg.EVM.Oracle.FeedAddr))
-			if err != nil {
-				grpcConn.Close()
-				return nil, fmt.Errorf("oracle feed binding: %w", err)
-			}
-			evmDeps.Oracle = oracle
-		}
-		if cfg.EVM.Bridge.Addr != "" {
-			br, err := builder.NewBridge(common.HexToAddress(cfg.EVM.Bridge.Addr))
-			if err != nil {
-				grpcConn.Close()
-				return nil, fmt.Errorf("bridge binding: %w", err)
-			}
-			routes, err := bridge.LoadRegistry(cfg.EVM.Bridge.RoutesPath)
-			if err != nil {
-				grpcConn.Close()
-				return nil, fmt.Errorf("bridge routes: %w", err)
-			}
-			if !routes.HasSource(cfg.EVM.Bridge.SourceChainID) {
-				grpcConn.Close()
-				return nil, fmt.Errorf("bridge routes %s has no routes originating from evm.bridge.source_chain_id %d",
-					cfg.EVM.Bridge.RoutesPath, cfg.EVM.Bridge.SourceChainID)
-			}
-			evmDeps.Bridge = br
-			evmDeps.BridgeRoutes = routes
-			evmDeps.BridgeSourceChainID = cfg.EVM.Bridge.SourceChainID
-			evmDeps.HomeChainID = cfg.EVM.Bridge.SourceChainID
-
-			if len(cfg.EVM.Bridge.ForeignChains) > 0 {
-				foreign := make(map[uint64]*tools.ForeignChain, len(cfg.EVM.Bridge.ForeignChains))
-				for _, fc := range cfg.EVM.Bridge.ForeignChains {
-					if _, err := routes.ResolveSourceChain(strconv.FormatUint(fc.ChainID, 10), cfg.EVM.Bridge.SourceChainID); err != nil {
-						grpcConn.Close()
-						return nil, fmt.Errorf("evm.bridge.foreign_chain %d: %w", fc.ChainID, err)
-					}
-					fbr, err := builder.NewBridge(common.HexToAddress(fc.BridgeAddr))
-					if err != nil {
-						grpcConn.Close()
-						return nil, fmt.Errorf("foreign bridge binding (chain %d): %w", fc.ChainID, err)
-					}
-					fclient, err := chain.NewEVMClient(ctx, fc.RPCURL)
-					if err != nil {
-						grpcConn.Close()
-						return nil, fmt.Errorf("foreign evm client (chain %d): %w", fc.ChainID, err)
-					}
-					foreign[fc.ChainID] = &tools.ForeignChain{
-						Client:    fclient,
-						Assembler: builder.NewEVMAssembler(fclient),
-						Bridge:    fbr,
-					}
-				}
-				evmDeps.ForeignChains = foreign
-			}
-		}
-	}
-
-	var faucetClient *faucet.Client
-	if cfg.FaucetBaseURL != "" {
-		faucetClient = faucet.NewClient(cfg.FaucetBaseURL, faucet.Options{})
-	}
-
-	idx := indexer.NewClient(cfg.DEXChain.IndexerBaseURL, indexer.Options{})
-
-	limitsCfg := limits.Config{
-		DepositMaxUSDC:       cfg.Limits.DepositMaxUSDC,
-		WithdrawMaxUSDC:      cfg.Limits.WithdrawMaxUSDC,
-		TransferMaxUSDC:      cfg.Limits.TransferMaxUSDC,
-		DailyWithdrawCapUSDC: cfg.Limits.DailyWithdrawCapUSDC,
-	}
-	withdrawLedger := limits.NewMemoryLedger(limitsCfg.DailyWithdrawCapUSDC, nil)
-	transferOut, err := limits.LoadMemoryTransferOutStore(cfg.TransferOutCapPath, nil, func(err error) {
-		logger.Error("transfer-out cap persistence failed", "error", err)
-	})
-	if err != nil {
-		grpcConn.Close()
-		return nil, fmt.Errorf("load transfer-out cap state: %w", err)
-	}
-
-	// Self-service auth state: in-memory + TTL-bounded, same defaults as the
-	// MCP server (auto-issued tenants get subaccounts 0..9).
-	nonceStore := auth.NewNonceStore(auth.DefaultChallengeTTL, nil)
-	dynamicTenants := auth.NewDynamicTenantStore(auth.DynamicTenantStoreConfig{
-		BearerTTL:                 auth.DefaultBearerTTL,
-		DefaultAllowedSubaccounts: []uint32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9},
-	}, nil)
-	ipLimit := auth.NewIPRateLimiter(auth.DefaultIPChallengeRate, auth.DefaultIPChallengeWindow, nil)
-	sessionBearers := auth.NewSessionBearers(auth.DefaultBearerTTL, nil)
-
-	policyEngine := policy.NewEngine(nil)
-	policyEngine.SetDynamicSource(dynamicTenantAdapter{store: dynamicTenants})
-
-	deps := tools.Deps{
-		Chain:             chainDeps,
-		Indexer:           idx,
-		Markets:           nil,
-		Builder:           builder.NewAssembler(cfg.DEXChain.ID, cfg.Fee.Denom, cfg.Fee.Amount, cfg.Fee.GasLimit),
-		Faucet:            faucetClient,
-		EVM:               evmDeps,
-		Policy:            policyEngine,
-		Auditor:           policy.NewStdoutAuditor(),
-		Idempotency:       policy.NewIdempotency(0),
-		RateLimit:         policy.NewRateLimiter(0, 0),
-		Limits:            limitsCfg,
-		WithdrawLedger:    withdrawLedger,
-		TransferOut:       transferOut,
-		NonceStore:        nonceStore,
-		DynamicTenants:    dynamicTenants,
-		IPChallengeLimit:  ipLimit,
-		SessionBearers:    sessionBearers,
-		Logger:            logger,
-		InterfaceRegistry: encCfg.InterfaceRegistry,
-		BroadcastMode:     cfg.BroadcastMode,
-	}
-	handlers := tools.New(cfg.DEXChain.ID, deps)
-
 	registry := toolbridge.NewEmpty()
-
-	p.Register(registry, handlers)
-
-	return &App{
-		Handlers: handlers,
-		Registry: registry,
-		Tenants:  dynamicTenants,
-		Sessions: sessionBearers,
-		Indexer:  idx,
-		GrpcConn: grpcConn,
-		Logger:   logger,
-	}, nil
+	for _, item := range []struct {
+		skill, name string
+		bound       toolbridge.Bound
+	}{
+		{toolbridge.SkillAuth, "auth_challenge", toolbridge.Native(service.AuthChallenge)},
+		{toolbridge.SkillAuth, "auth_verify", toolbridge.Native(service.AuthVerify)},
+		{toolbridge.SkillEVM, "broadcast_evm_tx", toolbridge.Native(service.Broadcast)},
+		{toolbridge.SkillEVM, "evm_tx_status", toolbridge.Native(service.TxStatus)},
+	} {
+		if err := registry.Add(item.skill, item.name, item.bound); err != nil {
+			service.Close()
+			return nil, err
+		}
+	}
+	registry.RegisterMeta()
+	return &App{Registry: registry, Tools: service, Tenants: tenants}, nil
 }

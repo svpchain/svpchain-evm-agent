@@ -45,7 +45,7 @@ type ListToolsOutput struct {
 // registry and reads it when called, so it reports whatever the binary
 // registered regardless of the order these Register* calls run in.
 func (r *Registry) RegisterMeta() {
-	r.add(SkillMeta, "list_tools", Bound{
+	if err := r.Add(SkillMeta, "list_tools", Bound{
 		InputSchema: schemaFor[ListToolsInput](),
 		Call: func(_ context.Context, raw json.RawMessage) (any, error) {
 			var in ListToolsInput
@@ -56,7 +56,9 @@ func (r *Registry) RegisterMeta() {
 			}
 			return r.listTools(in.Skill), nil
 		},
-	})
+	}); err != nil {
+		panic(err)
+	}
 }
 
 func (r *Registry) listTools(skill string) ListToolsOutput {

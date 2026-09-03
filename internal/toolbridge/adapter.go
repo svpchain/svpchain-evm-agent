@@ -1,27 +1,14 @@
-// Package toolbridge exposes the MCP tool handlers in internal/mcp/tools — and the
-// agent's own chain-module services — as A2A operations.
-//
-// Every MCP handler shares one shape, func(ctx, *mcp.CallToolRequest, In)
-// (*mcp.CallToolResult, Out, error), and none of them reads the request
-// parameter (auth, IP, and session travel in ctx). That uniformity is what
-// lets a single generic adapter serve all of them: decode the A2A args into
-// In, call the handler with a nil request, return Out. The bridge adds no
-// behavior — authorization, limits, and refusal messages are the handlers'
-// own, so the A2A surface and the MCP surface cannot drift.
+// Package toolbridge exposes the EVM Agent's own tools and its startup-frozen
+// private MCP catalog as A2A operations.
 package toolbridge
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"reflect"
 	"sort"
-	"strconv"
-	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // Op is one invokable operation: a tool bound to the A2A skill it is
@@ -31,11 +18,9 @@ type Op struct {
 	Tool  string
 	Call  func(ctx context.Context, args json.RawMessage) (any, error)
 
-	// InputSchema describes the args object, reflected from the same In type
-	// the MCP server's mcp.AddTool reflects over — including the jsonschema
-	// struct tags, so the per-field prose comes across too. Nil for an
-	// operation registered without a typed input (see addRefusing); callers
-	// should read that as "an object, contents unspecified".
+	// InputSchema describes the args object, reflected from the local input
+	// type, including jsonschema struct tags. Nil means an object with an
+	// unspecified shape.
 	InputSchema *jsonschema.Schema
 	// RawInputSchema preserves a schema supplied by a private MCP server.
 	RawInputSchema any
@@ -63,17 +48,14 @@ func (r *Registry) AddProxy(skill, tool string, schema any, call func(context.Co
 	return nil
 }
 
-// Bound is what an adapt* helper produces: a call plus the schema of the
-// arguments it decodes. Returning both together is what lets add() record a
-// schema without every registration site restating the handler's input type.
+// Bound is a typed local handler plus the schema of its arguments.
 type Bound struct {
 	Call        func(ctx context.Context, args json.RawMessage) (any, error)
 	InputSchema *jsonschema.Schema
 }
 
-// schemaFor reflects In the way mcp.AddTool does. A type that will not reflect
-// yields nil rather than a panic: an unusable schema must not stop the agent
-// from serving the tool.
+// schemaFor reflects a local handler input. An unusable schema must not stop
+// the agent from serving the tool.
 func schemaFor[In any]() *jsonschema.Schema {
 	s, err := jsonschema.For[In](nil)
 	if err != nil {
@@ -82,37 +64,7 @@ func schemaFor[In any]() *jsonschema.Schema {
 	return s
 }
 
-// handler is the uniform tool handler shape every internal/mcp/tools method has.
-type handler[In, Out any] func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)
-
-// adapt wraps an MCP tool handler into an Op call. The nil CallToolRequest is
-// safe: every handler ignores it (verified across the tool package — identity
-// comes from ctx via tools.WithTenant / WithIP / WithSessionID).
-func adapt[In, Out any](h handler[In, Out]) Bound {
-	return Bound{InputSchema: schemaFor[In](), Call: func(ctx context.Context, raw json.RawMessage) (any, error) {
-		var in In
-		if len(raw) > 0 {
-			if err := json.Unmarshal(raw, &in); err != nil {
-				return nil, fmt.Errorf("decode args: %w", err)
-			}
-		}
-		res, out, err := h(ctx, nil, in)
-		if err != nil {
-			return nil, err
-		}
-		// Handlers report failures as errors, not IsError results; this guard
-		// exists so a future handler that does neither cannot smuggle an error
-		// result through as success.
-		if res != nil && res.IsError {
-			return nil, errors.New(resultText(res))
-		}
-		return out, nil
-	}}
-}
-
-// adaptNative wraps a plain service method (no MCP types) into an Op call —
-// the twin of adapt for the agent's own chain-module operations.
-func adaptNative[In, Out any](f func(context.Context, In) (Out, error)) Bound {
+func native[In, Out any](f func(context.Context, In) (Out, error)) Bound {
 	return Bound{InputSchema: schemaFor[In](), Call: func(ctx context.Context, raw json.RawMessage) (any, error) {
 		var in In
 		if len(raw) > 0 {
@@ -124,73 +76,17 @@ func adaptNative[In, Out any](f func(context.Context, In) (Out, error)) Bound {
 	}}
 }
 
-// adaptStrictNative is adaptNative refusing unknown top-level arg keys. The
-// execution inputs nest their parameters under a wrapper object ("order",
-// "cancel", "deposit"); a caller passing the fields flat — the read tools'
-// shape — would otherwise have them silently dropped and the tool would run
-// against zero values, e.g. a deposit resolving to subaccount 0 no matter
-// what was asked. Refusing up front turns that trap into an actionable error.
-func adaptStrictNative[In, Out any](f func(context.Context, In) (Out, error)) Bound {
-	allowed := jsonKeysOf[In]()
-	inner := adaptNative(f)
-	return Bound{InputSchema: inner.InputSchema, Call: func(ctx context.Context, raw json.RawMessage) (any, error) {
-		if len(raw) > 0 {
-			var top map[string]json.RawMessage
-			if err := json.Unmarshal(raw, &top); err != nil {
-				return nil, fmt.Errorf("decode args: %w", err)
-			}
-			for k := range top {
-				if !allowed[k] {
-					return nil, fmt.Errorf(
-						"unknown args key %q — this tool takes %s; tool parameters nest under the wrapper object, not at the top level",
-						k, keyList(allowed))
-				}
-			}
-		}
-		return inner.Call(ctx, raw)
-	}}
-}
+// Native exposes a typed local handler to the small relay surface.
+func Native[In, Out any](f func(context.Context, In) (Out, error)) Bound { return native(f) }
 
-// jsonKeysOf returns the JSON keys of In's top-level struct fields.
-func jsonKeysOf[In any]() map[string]bool {
-	keys := map[string]bool{}
-	t := reflect.TypeFor[In]()
-	if t.Kind() != reflect.Struct {
-		return keys
+// Add adds an explicitly constructed operation. Dynamic MCP proxies use
+// AddProxy; the agent's own auth and relay tools use Add with Native.
+func (r *Registry) Add(skill, tool string, b Bound) error {
+	if _, dup := r.ops[tool]; dup {
+		return fmt.Errorf("toolbridge: duplicate tool %q", tool)
 	}
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
-		if !f.IsExported() {
-			continue
-		}
-		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
-		switch name {
-		case "-":
-			continue
-		case "":
-			name = f.Name
-		}
-		keys[name] = true
-	}
-	return keys
-}
-
-func keyList(keys map[string]bool) string {
-	names := make([]string, 0, len(keys))
-	for k := range keys {
-		names = append(names, strconv.Quote(k))
-	}
-	sort.Strings(names)
-	return strings.Join(names, ", ")
-}
-
-func resultText(res *mcp.CallToolResult) string {
-	for _, c := range res.Content {
-		if t, ok := c.(*mcp.TextContent); ok && t.Text != "" {
-			return t.Text
-		}
-	}
-	return "tool refused"
+	r.ops[tool] = Op{Skill: skill, Tool: tool, Call: b.Call, InputSchema: b.InputSchema}
+	return nil
 }
 
 // Registry maps tool names to operations and groups them by skill for the
@@ -200,22 +96,6 @@ type Registry struct {
 }
 
 func newRegistry() *Registry { return &Registry{ops: map[string]Op{}} }
-
-func (r *Registry) add(skill, tool string, b Bound) {
-	if _, dup := r.ops[tool]; dup {
-		panic(fmt.Sprintf("toolbridge: duplicate tool %q", tool))
-	}
-	r.ops[tool] = Op{Skill: skill, Tool: tool, Call: b.Call, InputSchema: b.InputSchema}
-}
-
-// addRefusing registers a tool that always refuses with reason — used for
-// skills whose backing service is not configured, so a caller learns the
-// requirement instead of meeting an unknown-tool error.
-func (r *Registry) addRefusing(skill, tool, reason string) {
-	r.add(skill, tool, Bound{Call: func(context.Context, json.RawMessage) (any, error) {
-		return nil, errors.New(reason)
-	}})
-}
 
 // Lookup returns the operation registered under tool.
 func (r *Registry) Lookup(tool string) (Op, bool) {

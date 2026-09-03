@@ -9,151 +9,38 @@ import (
 
 func writeConfig(t *testing.T, body string) string {
 	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "agent.toml")
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+	path := filepath.Join(t.TempDir(), "agent.toml")
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
 		t.Fatal(err)
 	}
 	return path
 }
 
-// Dotted dex_chain.* keys (not a [dex_chain] header) so tests can keep
-// appending top-level keys to this fixture without them landing inside the
-// table.
 const minimal = `
-dex_chain.id               = "svp-test-1"
-dex_chain.grpc_addr        = "127.0.0.1:9090"
-dex_chain.comet_rpc_url    = "http://127.0.0.1:26657"
-dex_chain.indexer_base_url = "http://127.0.0.1:3002"
-listen_addr                = ":8081"
-defi_mcp.url               = "http://127.0.0.1:18081/mcp"
-llm.api_key_env            = "TEST_LLM_API_KEY"
+listen_addr = ":8083"
+[dex_chain]
+id = "svp-2517-1"
+evm_rpc_url = "http://127.0.0.1:8545"
+[defi_mcp]
+url = "http://127.0.0.1:18081/mcp"
+[llm]
+api_key_env = "EVM_AGENT_LLM_API_KEY"
 `
 
-func TestLoadMinimalAppliesDefaults(t *testing.T) {
+func TestLoadMinimal(t *testing.T) {
 	cfg, err := Load(writeConfig(t, minimal))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Fee.Denom != DefaultFeeDenom || cfg.Fee.Amount != DefaultFeeAmount || cfg.Fee.GasLimit != DefaultFeeGasLimit {
-		t.Errorf("fee defaults not applied: %+v", cfg.Fee)
-	}
-	if cfg.BroadcastMode != "server" {
-		t.Errorf("broadcast_mode default not applied: %q", cfg.BroadcastMode)
-	}
-	if cfg.PublicURL != "http://localhost:8081" {
-		t.Errorf("public_url default not derived from listen_addr: %q", cfg.PublicURL)
+	if cfg.PublicURL != "http://localhost:8083" {
+		t.Fatalf("public URL = %q", cfg.PublicURL)
 	}
 }
-
-func TestLoadRejectsMissingRequiredFields(t *testing.T) {
-	for _, missing := range []string{"dex_chain.id", "dex_chain.grpc_addr", "dex_chain.comet_rpc_url", "dex_chain.indexer_base_url", "listen_addr"} {
-		t.Run(missing, func(t *testing.T) {
-			var body strings.Builder
-			for _, line := range strings.Split(strings.TrimSpace(minimal), "\n") {
-				if !strings.HasPrefix(strings.TrimSpace(line), missing) {
-					body.WriteString(line + "\n")
-				}
-			}
-			if _, err := Load(writeConfig(t, body.String())); err == nil || !strings.Contains(err.Error(), missing) {
-				t.Errorf("expected error naming %s, got %v", missing, err)
-			}
-		})
-	}
-}
-
-func TestSwapAddressesAreBothOrNeither(t *testing.T) {
-	body := minimal + `
-dex_chain.evm_rpc_url        = "http://127.0.0.1:8545"
-evm.swap.uniswap_router_addr = "0x0000000000000000000000000000000000000001"
-`
-	if _, err := Load(writeConfig(t, body)); err == nil || !strings.Contains(err.Error(), "must be set together") {
-		t.Errorf("router without wsvp must fail, got %v", err)
-	}
-}
-
-func TestSwapFactoryEnablesPairDiscovery(t *testing.T) {
-	cfg, err := Load(writeConfig(t, minimal+`
-dex_chain.evm_rpc_url        = "http://127.0.0.1:8545"
-evm.swap.uniswap_router_addr = "0x0000000000000000000000000000000000000001"
-evm.swap.wsvp_addr           = "0x0000000000000000000000000000000000000002"
-evm.swap.factory_addr        = "0x0000000000000000000000000000000000000003"
-`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.EVM.Swap.FactoryAddr != "0x0000000000000000000000000000000000000003" {
-		t.Errorf("factory_addr = %q", cfg.EVM.Swap.FactoryAddr)
-	}
-}
-
-func TestConfiguredEVMAssetsAreValidated(t *testing.T) {
-	cfg, err := Load(writeConfig(t, minimal+`
-[[evm.asset]]
-id       = "usdc"
-address  = "0x000000000000000000000000000000000000c07e"
-decimals = 6
-`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cfg.EVM.Assets) != 1 || cfg.EVM.Assets[0].ID != "usdc" {
-		t.Fatalf("assets = %+v", cfg.EVM.Assets)
-	}
-
-	_, err = Load(writeConfig(t, minimal+`
-[[evm.asset]]
-id      = "usdc"
-address = "not-an-address"
-`))
-	if err == nil || !strings.Contains(err.Error(), "evm.asset[0].address") {
-		t.Fatalf("error = %v", err)
-	}
-}
-
-func TestBridgeRequiresAllThreeAndEVMRPC(t *testing.T) {
-	body := minimal + `
-evm.bridge.addr = "0x0000000000000000000000000000000000000002"
-`
-	if _, err := Load(writeConfig(t, body)); err == nil || !strings.Contains(err.Error(), "set together") {
-		t.Errorf("partial bridge config must fail, got %v", err)
-	}
-}
-
-func TestForeignChainRequiresHomeBridge(t *testing.T) {
-	body := minimal + `
-[[evm.bridge.foreign_chain]]
-chain_id    = 421614
-rpc_url     = "http://foreign:8545"
-bridge_addr = "0x0000000000000000000000000000000000000003"
-`
-	if _, err := Load(writeConfig(t, body)); err == nil || !strings.Contains(err.Error(), "requires the bridge") {
-		t.Errorf("foreign chain without home bridge must fail, got %v", err)
-	}
-}
-
-func TestFeeAmountMustBeANonNegativeInteger(t *testing.T) {
-	body := minimal + `
-[fee]
-denom  = "asvp"
-amount = "not-a-number"
-`
-	if _, err := Load(writeConfig(t, body)); err == nil || !strings.Contains(err.Error(), "fee.amount") {
-		t.Errorf("bad fee amount must fail, got %v", err)
-	}
-}
-
-// ★ The lendora schema was removed with the Lendora surface, but agents already
-// deployed have an agent.toml on disk that may still carry that block. TOML
-// decoding must ignore it rather than reject the file — otherwise shrinking the
-// schema silently turns a running deployment into a boot failure on its next
-// restart, with no config change on the operator's side.
-func TestRetiredLendoraKeysAreIgnoredNotRejected(t *testing.T) {
-	body := minimal + `
-dex_chain.evm_rpc_url        = "http://127.0.0.1:8545"
-evm.lendora.comptroller_addr = "0x0000000000000000000000000000000000000003"
-`
-	if _, err := Load(writeConfig(t, body)); err != nil {
-		t.Errorf("a config carrying the retired lendora block must still load, got %v", err)
+func TestLoadRequiresPrivateServices(t *testing.T) {
+	for _, key := range []string{"evm_rpc_url", "defi_mcp", "api_key_env"} {
+		body := strings.Replace(minimal, key, "removed_"+key, 1)
+		if _, err := Load(writeConfig(t, body)); err == nil {
+			t.Errorf("%s must be required", key)
+		}
 	}
 }

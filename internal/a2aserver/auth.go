@@ -6,45 +6,26 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
+	"github.com/svpchain/svpchain-evm-agent/internal/agenttools"
 	"github.com/svpchain/svpchain-evm-agent/internal/mcp/auth"
-	"github.com/svpchain/svpchain-evm-agent/internal/mcp/tools"
 )
 
-// AuthResolver maps an A2A request onto the tenant/IP/session context the MCP
-// tool handlers read. It owns no verification logic — challenges, signatures,
+// AuthResolver maps an A2A request onto the authenticated tenant context. It owns no verification logic — challenges, signatures,
 // and bearer minting live in the auth_challenge / auth_verify tools — it only
 // resolves an already-minted bearer to its tenant and stamps the context.
 type AuthResolver struct {
-	Tenants  *auth.DynamicTenantStore
-	Sessions *auth.SessionBearers
+	Tenants *auth.DynamicTenantStore
 }
 
 // Attach returns ctx annotated for the tool handlers:
 //
-//   - Bearer, resolved in precedence order: Authorization header, envelope
-//     field, then the bearer bound to this A2A context id by a previous
-//     auth_verify on the same conversation. A resolved bearer becomes a
-//     tools.TenantContext; an unknown or expired one is simply absent, and
-//     the gated handler refuses with its own message.
-//   - The A2A context id rides as the session id, so auth_verify can bind its
-//     minted bearer to the conversation (the role Mcp-Session-Id plays on the
-//     MCP transport).
-//   - The client IP (via X-Forwarded-For when present) feeds auth_challenge's
-//     per-IP rate limit; absent is fine — the limiter passes empty keys.
+//   - Bearer is resolved from the Authorization header, then the envelope
+//     field. A resolved bearer becomes a tenant; an unknown or expired one is
+//     absent, and the gated handler refuses with its own message.
 func (r *AuthResolver) Attach(ctx context.Context, execCtx *a2asrv.ExecutorContext, req *Request) context.Context {
-	if execCtx.ContextID != "" {
-		ctx = tools.WithSessionID(ctx, execCtx.ContextID)
-	}
-	if ip := headerValue(execCtx, "x-forwarded-for"); ip != "" {
-		ctx = tools.WithIP(ctx, strings.TrimSpace(strings.Split(ip, ",")[0]))
-	}
-
 	bearer := bearerFromHeader(execCtx)
 	if bearer == "" {
 		bearer = req.Bearer
-	}
-	if bearer == "" && r.Sessions != nil && execCtx.ContextID != "" {
-		bearer = r.Sessions.Lookup(execCtx.ContextID)
 	}
 	if bearer == "" || r.Tenants == nil {
 		return ctx
@@ -53,7 +34,7 @@ func (r *AuthResolver) Attach(ctx context.Context, execCtx *a2asrv.ExecutorConte
 	if err != nil {
 		return ctx
 	}
-	return tools.WithTenant(ctx, tools.TenantContext{TenantID: rec.TenantID, Owner: rec.Owner})
+	return agenttools.WithTenant(ctx, agenttools.Tenant{ID: rec.TenantID, Owner: rec.Owner})
 }
 
 func bearerFromHeader(execCtx *a2asrv.ExecutorContext) string {

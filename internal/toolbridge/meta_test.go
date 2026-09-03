@@ -15,14 +15,19 @@ type metaOut struct {
 	Value string `json:"value"`
 }
 
-func metaRegistry() *Registry {
+func metaRegistry(t *testing.T) *Registry {
+	t.Helper()
 	r := newRegistry()
-	r.add("skill-a", "read_thing", adaptNative(func(_ context.Context, in metaIn) (metaOut, error) {
+	if err := r.Add("skill-a", "read_thing", Native(func(_ context.Context, in metaIn) (metaOut, error) {
 		return metaOut{Value: in.Ticker}, nil
-	}))
-	r.add("skill-b", "other_thing", adaptNative(func(_ context.Context, in metaIn) (metaOut, error) {
+	})); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Add("skill-b", "other_thing", Native(func(_ context.Context, in metaIn) (metaOut, error) {
 		return metaOut{}, nil
-	}))
+	})); err != nil {
+		t.Fatal(err)
+	}
 	r.RegisterMeta()
 	return r
 }
@@ -54,7 +59,7 @@ func listTools(t *testing.T, r *Registry, args string) ListToolsOutput {
 // The whole point of the surface: a caller with no MCP connection learns the
 // tool names, their skill, and the shape of their arguments.
 func TestListToolsServesNamesSkillsAndSchemas(t *testing.T) {
-	out := listTools(t, metaRegistry(), "")
+	out := listTools(t, metaRegistry(t), "")
 
 	byTool := map[string]ToolDescriptor{}
 	for _, d := range out.Tools {
@@ -88,19 +93,19 @@ func TestListToolsServesNamesSkillsAndSchemas(t *testing.T) {
 }
 
 func TestListToolsFiltersBySkill(t *testing.T) {
-	out := listTools(t, metaRegistry(), `{"skill":"skill-a"}`)
+	out := listTools(t, metaRegistry(t), `{"skill":"skill-a"}`)
 	if len(out.Tools) != 1 || out.Tools[0].Tool != "read_thing" {
 		t.Fatalf("skill filter returned %+v", out.Tools)
 	}
 }
 
 func TestListToolsIsSortedAndNeverNil(t *testing.T) {
-	out := listTools(t, metaRegistry(), `{"skill":"nothing-registered"}`)
+	out := listTools(t, metaRegistry(t), `{"skill":"nothing-registered"}`)
 	if out.Tools == nil {
 		t.Error("an empty listing must marshal as [], not null")
 	}
 
-	all := listTools(t, metaRegistry(), "")
+	all := listTools(t, metaRegistry(t), "")
 	for i := 1; i < len(all.Tools); i++ {
 		if all.Tools[i-1].Tool > all.Tools[i].Tool {
 			t.Fatalf("listing is not sorted: %q before %q", all.Tools[i-1].Tool, all.Tools[i].Tool)
@@ -111,7 +116,7 @@ func TestListToolsIsSortedAndNeverNil(t *testing.T) {
 // list_tools reads the registry it was built over, so it cannot advertise an
 // operation the executor would refuse to dispatch.
 func TestListToolsCannotOutrunTheRegistry(t *testing.T) {
-	r := metaRegistry()
+	r := metaRegistry(t)
 	for _, d := range listTools(t, r, "").Tools {
 		op, ok := r.Lookup(d.Tool)
 		if !ok {

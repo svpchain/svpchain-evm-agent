@@ -10,12 +10,9 @@ SVPCHAIN_DEPLOY_HOST="www@svpdev1.example.com"
 # this machine directly. Comma-separate to chain several hops.
 # SVPCHAIN_DEPLOY_JUMP_BOX="ops@bastion.example.com"
 
-# The chain endpoints as reached from the deploy host. The container uses host
-# networking, so 127.0.0.1 means the deploy host itself.
+# EVM RPC as reached from the deploy host. The container uses host networking,
+# so 127.0.0.1 means the deploy host itself.
 SVPCHAIN_CHAIN_ID="svp-2517-1"
-SVPCHAIN_GRPC_ADDR="127.0.0.1:9090"
-SVPCHAIN_COMET_RPC="http://127.0.0.1:26657"
-SVPCHAIN_INDEXER="http://127.0.0.1:3002"
 SVPCHAIN_EVM_RPC="http://127.0.0.1:8545"
 
 # The public A2A URL. Nothing is appended to it.
@@ -28,25 +25,8 @@ SVPCHAIN_EVM_AGENT_LLM_API_KEY=""
 #SVPCHAIN_EVM_AGENT_LLM_BASE_URL="https://api.openai.com"
 #SVPCHAIN_EVM_AGENT_LLM_MODEL="gpt-5-mini"
 
-# Optional EVM families.
-#SVPCHAIN_EVM_UNISWAP_ROUTER="0x..."
-#SVPCHAIN_EVM_WSVP="0x..."
-#SVPCHAIN_EVM_UNISWAP_FACTORY="0x..."
-# Stable ERC-20 aliases returned by list_evm_assets: id,address,decimals;...
-#SVPCHAIN_EVM_ASSETS="usdc,0x0000000000000000000000000000000000000000,6"
-#SVPCHAIN_EVM_ORACLE="0x..."
-#SVPCHAIN_EVM_BRIDGE="0x..."
-#SVPCHAIN_EVM_BRIDGE_ROUTES="routes.json"
-#SVPCHAIN_EVM_BRIDGE_SOURCE_CHAIN_ID="2517"
-#SVPCHAIN_EVM_FOREIGN_CHAINS="421614,https://example.invalid/rpc,0x..."
-#SVPCHAIN_FAUCET_URL="https://pre-faucet.svpchain.org"
-
-# Optional local state and risk controls.
-#SVPCHAIN_TRANSFER_OUT_CAP_PATH="transfer-out-caps.json"
-#SVPCHAIN_DEPOSIT_MAX_USDC="10000"
-#SVPCHAIN_WITHDRAW_MAX_USDC="10000"
-#SVPCHAIN_TRANSFER_MAX_USDC="10000"
-#SVPCHAIN_DAILY_WITHDRAW_CAP_USDC="50000"
+# Router, bridge, token aliases, faucet and all DeFi contract addresses belong
+# to the private DeFi MCP deployment, not this public EVM relay.
 
 # Remote installation directory.
 #SVPCHAIN_INSTALL_DIR="~/svpchain-evm-agent"

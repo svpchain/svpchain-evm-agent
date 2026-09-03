@@ -10,9 +10,6 @@ import (
 )
 
 // DefaultBearerTTL is how long an auto-issued bearer stays valid.
-// 24h matches typical hot-wallet session windows: long enough for a
-// multi-day workflow, short enough that a stolen bearer's blast radius
-// is bounded.
 const DefaultBearerTTL = 24 * time.Hour
 
 // bearerLen is the byte length of generated bearers (32 = 256-bit;
@@ -27,33 +24,25 @@ var ErrBearerNotFound = errors.New("bearer not found")
 var ErrBearerExpired = errors.New("bearer expired")
 
 // TenantRecord is the dynamic-store view of an auto-issued tenant.
-// Mirrors the fields a policy.TenantPolicy carries; the dynamic store
-// owns the TenantID (it's a UUID generated at mint time, not user-supplied).
 type TenantRecord struct {
-	TenantID           string
-	Owner              string
-	AllowedSubaccounts map[uint32]struct{}
-	KillSwitch         bool
-	ExpiresAt          time.Time
+	TenantID  string
+	Owner     string
+	ExpiresAt time.Time
 }
 
 // DynamicTenantStore mints + tracks self-service tenants. Concurrency-
 // safe; TTL-bounded with background sweep.
 type DynamicTenantStore struct {
-	ttl                       time.Duration
-	now                       func() time.Time
-	defaultAllowedSubaccounts map[uint32]struct{}
-
+	ttl      time.Duration
+	now      func() time.Time
 	mu       sync.RWMutex
 	byBearer map[string]string       // bearer → tenant_id
 	byTenant map[string]TenantRecord // tenant_id → record
 }
 
-// DynamicTenantStoreConfig captures the defaults every auto-issued
-// tenant inherits at mint time.
+// DynamicTenantStoreConfig captures the bearer lifetime.
 type DynamicTenantStoreConfig struct {
-	BearerTTL                 time.Duration
-	DefaultAllowedSubaccounts []uint32
+	BearerTTL time.Duration
 }
 
 // NewDynamicTenantStore constructs a store from the supplied config.
@@ -62,16 +51,11 @@ func NewDynamicTenantStore(cfg DynamicTenantStoreConfig, now func() time.Time) *
 	if now == nil {
 		now = time.Now
 	}
-	allowed := make(map[uint32]struct{}, len(cfg.DefaultAllowedSubaccounts))
-	for _, s := range cfg.DefaultAllowedSubaccounts {
-		allowed[s] = struct{}{}
-	}
 	return &DynamicTenantStore{
-		ttl:                       cfg.BearerTTL,
-		now:                       now,
-		defaultAllowedSubaccounts: allowed,
-		byBearer:                  map[string]string{},
-		byTenant:                  map[string]TenantRecord{},
+		ttl:      cfg.BearerTTL,
+		now:      now,
+		byBearer: map[string]string{},
+		byTenant: map[string]TenantRecord{},
 	}
 }
 
@@ -97,13 +81,7 @@ func (s *DynamicTenantStore) Mint(owner string) (bearer, tenantID string, expire
 	tenantID = "auto-" + hex.EncodeToString(tbuf)
 	expiresAt = s.now().Add(s.ttl).UTC()
 
-	rec := TenantRecord{
-		TenantID:           tenantID,
-		Owner:              owner,
-		AllowedSubaccounts: s.cloneAllowed(),
-		KillSwitch:         false,
-		ExpiresAt:          expiresAt,
-	}
+	rec := TenantRecord{TenantID: tenantID, Owner: owner, ExpiresAt: expiresAt}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -121,23 +99,6 @@ func (s *DynamicTenantStore) LookupByBearer(bearer string) (TenantRecord, error)
 	if !ok {
 		return TenantRecord{}, ErrBearerNotFound
 	}
-	rec, ok := s.byTenant[tenantID]
-	if !ok {
-		return TenantRecord{}, ErrBearerNotFound
-	}
-	if !s.now().Before(rec.ExpiresAt) {
-		return TenantRecord{}, ErrBearerExpired
-	}
-	return rec, nil
-}
-
-// LookupByTenantID returns the tenant record by its assigned tenant_id.
-// Used by the policy resolver after the middleware sets a TenantContext
-// on the request — handlers read TenantContext.TenantID and look up the
-// full record here.
-func (s *DynamicTenantStore) LookupByTenantID(tenantID string) (TenantRecord, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
 	rec, ok := s.byTenant[tenantID]
 	if !ok {
 		return TenantRecord{}, ErrBearerNotFound
@@ -169,12 +130,4 @@ func (s *DynamicTenantStore) Len() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.byTenant)
-}
-
-func (s *DynamicTenantStore) cloneAllowed() map[uint32]struct{} {
-	out := make(map[uint32]struct{}, len(s.defaultAllowedSubaccounts))
-	for k := range s.defaultAllowedSubaccounts {
-		out[k] = struct{}{}
-	}
-	return out
 }

@@ -22,35 +22,5 @@ model = "gpt-5-mini"
 api_key_env = "EVM_AGENT_LLM_API_KEY"
 
 [dex_chain]
-id               = "svpchain-testnet-1"
-grpc_addr        = "127.0.0.1:9090"
-comet_rpc_url    = "http://127.0.0.1:26657"
-indexer_base_url = "http://127.0.0.1:3002"
-# Required for this binary.
-evm_rpc_url      = "http://127.0.0.1:8545"
-
-# Swap building (UniswapV2Router02 + wrapped native). Both-or-neither;
-# factory_addr enables dynamic pair and token discovery. Router/WSVP are both
-# required for quote/build; when unset those swap tools refuse at call time.
-#[evm.swap]
-#uniswap_router_addr = "0x…"
-#wsvp_addr           = "0x…"
-#factory_addr        = "0x…"
-
-# Stable ERC-20 aliases. These are convenience names only, not a contract
-# allowlist: callers can still use any ERC-20 0x address directly. Amounts are
-# always converted using the token's on-chain decimals().
-#
-#[[evm.asset]]
-#id       = "usdc"
-#address  = "0x…"
-#decimals = 6
-
-# Bridge deposits. All three together; unset, the bridge tools refuse.
-#[evm.bridge]
-#addr            = "0x…"
-#routes_path     = "routes.json"
-#source_chain_id = 1234
-
-# Optional testnet faucet backend; unset, the faucet tools refuse.
-#faucet_base_url = "http://127.0.0.1:8088"
+id          = "svpchain-testnet-1"
+evm_rpc_url = "http://127.0.0.1:8545"
