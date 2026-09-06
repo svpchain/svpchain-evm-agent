@@ -91,6 +91,8 @@
 #                                  SVPCHAIN_EVM_RPC
 #   --defi-mcp-url <url>           Private Streamable HTTP MCP endpoint.
 #                                  SVPCHAIN_DEFI_MCP_URL
+#   --defi-mcp-auth-token <token>  Shared secret accepted by the private MCP.
+#                                  SVPCHAIN_DEFI_MCP_AUTH_TOKEN
 #   --llm-provider <provider>      Default "openai".
 #                                  SVPCHAIN_EVM_AGENT_LLM_PROVIDER
 #   --llm-base-url <url>           SVPCHAIN_EVM_AGENT_LLM_BASE_URL
@@ -226,7 +228,7 @@ readonly CONFIG_VARS=(
   SVPCHAIN_EVM_AGENT_PUBLIC_URL SVPCHAIN_EVM_AGENT_OWNER_KEY SVPCHAIN_REGISTER_GRPC SVPCHAIN_REGISTER_RPC
   SVPCHAIN_OPERATOR_CAPABILITIES SVPCHAIN_OPERATOR_METADATA SVPCHAIN_INSTALL_DIR
   SVPCHAIN_AGENT_PRICING_AMOUNT SVPCHAIN_AGENT_PRICING_UNIT
-  SVPCHAIN_EVM_RPC SVPCHAIN_DEFI_MCP_URL
+  SVPCHAIN_EVM_RPC SVPCHAIN_DEFI_MCP_URL SVPCHAIN_DEFI_MCP_AUTH_TOKEN
   SVPCHAIN_EVM_AGENT_LLM_PROVIDER SVPCHAIN_EVM_AGENT_LLM_BASE_URL
   SVPCHAIN_EVM_AGENT_LLM_MODEL SVPCHAIN_EVM_AGENT_LLM_API_KEY
 )
@@ -295,6 +297,7 @@ agent_chain_id="${SVPCHAIN_AGENT_CHAIN_ID:-}"
 agent_chain_rest="${SVPCHAIN_AGENT_CHAIN_REST:-}"
 public_url="${SVPCHAIN_EVM_AGENT_PUBLIC_URL:-https://agent-testnet.svpchain.org}"
 defi_mcp_url="${SVPCHAIN_DEFI_MCP_URL:-}"
+defi_mcp_auth_token="${SVPCHAIN_DEFI_MCP_AUTH_TOKEN:-}"
 llm_provider="${SVPCHAIN_EVM_AGENT_LLM_PROVIDER:-openai}"
 llm_base_url="${SVPCHAIN_EVM_AGENT_LLM_BASE_URL:-}"
 llm_model="${SVPCHAIN_EVM_AGENT_LLM_MODEL:-}"
@@ -342,6 +345,7 @@ while [[ $# -gt 0 ]]; do
     --pricing-unit)           pricing_unit="$2"; mark_flag SVPCHAIN_AGENT_PRICING_UNIT; shift 2 ;;
     --evm-rpc)                evm_rpc="$2"; mark_flag SVPCHAIN_EVM_RPC;           shift 2 ;;
     --defi-mcp-url)           defi_mcp_url="$2"; mark_flag SVPCHAIN_DEFI_MCP_URL; shift 2 ;;
+    --defi-mcp-auth-token)    defi_mcp_auth_token="$2"; mark_flag SVPCHAIN_DEFI_MCP_AUTH_TOKEN; shift 2 ;;
     --llm-provider)            llm_provider="$2"; mark_flag SVPCHAIN_EVM_AGENT_LLM_PROVIDER; shift 2 ;;
     --llm-base-url)            llm_base_url="$2"; mark_flag SVPCHAIN_EVM_AGENT_LLM_BASE_URL; shift 2 ;;
     --llm-model)               llm_model="$2"; mark_flag SVPCHAIN_EVM_AGENT_LLM_MODEL; shift 2 ;;
@@ -434,10 +438,12 @@ listen_addr      = "0.0.0.0:${AGENT_PORT}"
 public_url       = "${public_url}"
 EOF
   [[ -n "$defi_mcp_url" ]] || fail "SVPCHAIN_DEFI_MCP_URL is required"
+  [[ -n "$defi_mcp_auth_token" ]] || fail "SVPCHAIN_DEFI_MCP_AUTH_TOKEN is required"
   cat <<EOF
 
 [defi_mcp]
 url = "${defi_mcp_url}"
+auth_token = "${defi_mcp_auth_token}"
 timeout = "90s"
 
 [llm]
@@ -847,7 +853,7 @@ if [[ "$mode" == "print-env" ]]; then
     SVPCHAIN_AGENT_CHAIN_ID SVPCHAIN_AGENT_CHAIN_REST SVPCHAIN_EVM_AGENT_PUBLIC_URL
     SVPCHAIN_EVM_AGENT_OWNER_KEY SVPCHAIN_REGISTER_GRPC SVPCHAIN_REGISTER_RPC SVPCHAIN_OPERATOR_CAPABILITIES
     SVPCHAIN_OPERATOR_METADATA SVPCHAIN_AGENT_PRICING_AMOUNT
-    SVPCHAIN_AGENT_PRICING_UNIT SVPCHAIN_EVM_RPC SVPCHAIN_DEFI_MCP_URL
+    SVPCHAIN_AGENT_PRICING_UNIT SVPCHAIN_EVM_RPC SVPCHAIN_DEFI_MCP_URL SVPCHAIN_DEFI_MCP_AUTH_TOKEN
     SVPCHAIN_EVM_AGENT_LLM_PROVIDER SVPCHAIN_EVM_AGENT_LLM_BASE_URL
     SVPCHAIN_EVM_AGENT_LLM_MODEL SVPCHAIN_EVM_AGENT_LLM_API_KEY SVPCHAIN_INSTALL_DIR
   )
@@ -856,7 +862,7 @@ if [[ "$mode" == "print-env" ]]; then
     "$agent_chain_id" "$agent_chain_rest" "$public_url"
     "$owner_key" "$register_grpc" "$register_rpc" "$operator_capabilities"
     "$operator_metadata" "$pricing_amount"
-    "$pricing_unit" "$evm_rpc" "$defi_mcp_url"
+    "$pricing_unit" "$evm_rpc" "$defi_mcp_url" "$defi_mcp_auth_token"
     "$llm_provider" "$llm_base_url" "$llm_model" "${SVPCHAIN_EVM_AGENT_LLM_API_KEY:-}" "$install_dir"
   )
 
@@ -882,7 +888,7 @@ if [[ "$mode" == "print-env" ]]; then
     # from "the command substitution returned nothing". Trimmed but NOT
     # validated: a malformed key should still be diagnosable here rather than
     # aborting the one mode you would reach for to diagnose it.
-    if [[ "$name" == "SVPCHAIN_EVM_AGENT_OWNER_KEY" || "$name" == "SVPCHAIN_EVM_AGENT_LLM_API_KEY" ]]; then
+    if [[ "$name" == "SVPCHAIN_EVM_AGENT_OWNER_KEY" || "$name" == "SVPCHAIN_EVM_AGENT_LLM_API_KEY" || "$name" == "SVPCHAIN_DEFI_MCP_AUTH_TOKEN" ]]; then
       value="$(printf '%s' "$value" | tr -d '[:space:]')"
       if [[ -n "$value" ]]; then value="set (${#value} chars)"; else value="unset"; fi
     fi

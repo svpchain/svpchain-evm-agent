@@ -54,7 +54,7 @@ func run(ctx context.Context, configPath string) error {
 		return err
 	}
 	defer app.Close()
-	mcpClient, err := defimcp.Connect(ctx, cfg.DeFiMCP.URL, time.Duration(cfg.DeFiMCP.Timeout))
+	mcpClient, err := defimcp.Connect(ctx, cfg.DeFiMCP.URL, cfg.DeFiMCP.AuthToken, time.Duration(cfg.DeFiMCP.Timeout))
 	if err != nil {
 		return err
 	}

@@ -11,8 +11,6 @@ import (
 func TestAgentCardListsOnlyRelaySkills(t *testing.T) {
 	registry := toolbridge.NewEmpty()
 	for _, entry := range []struct{ skill, tool string }{
-		{toolbridge.SkillAuth, "auth_challenge"},
-		{toolbridge.SkillAuth, "auth_verify"},
 		{toolbridge.SkillEVM, "broadcast_evm_tx"},
 		{toolbridge.SkillEVM, "evm_tx_status"},
 	} {
@@ -23,8 +21,8 @@ func TestAgentCardListsOnlyRelaySkills(t *testing.T) {
 	registry.RegisterMeta()
 
 	card := a2aserver.BuildAgentCardFor(identity, "https://agents.example.test", registry)
-	if len(card.Skills) != 3 {
-		t.Fatalf("expected auth, evm, and meta skills, got %d", len(card.Skills))
+	if len(card.Skills) != 2 {
+		t.Fatalf("expected evm and meta skills, got %d", len(card.Skills))
 	}
 	for _, skill := range card.Skills {
 		if skill.ID == toolbridge.SkillEVM && (contains(skill.Tags, "swap") || contains(skill.Tags, "bridge")) {

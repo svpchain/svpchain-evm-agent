@@ -38,8 +38,9 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 		skill, name string
 		bound       toolbridge.Bound
 	}{
-		{toolbridge.SkillAuth, "auth_challenge", toolbridge.Native(service.AuthChallenge)},
-		{toolbridge.SkillAuth, "auth_verify", toolbridge.Native(service.AuthVerify)},
+		// Legacy direct-A2A auth handlers remain on Service for now, but are no
+		// longer public operations. Private MCP access is authenticated solely by
+		// the EVM relay's shared token.
 		{toolbridge.SkillEVM, "broadcast_evm_tx", toolbridge.Native(service.Broadcast)},
 		{toolbridge.SkillEVM, "evm_tx_status", toolbridge.Native(service.TxStatus)},
 	} {

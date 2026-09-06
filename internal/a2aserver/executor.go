@@ -9,6 +9,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
+	"github.com/svpchain/svpchain-evm-agent/internal/defimcp"
 	"github.com/svpchain/svpchain-evm-agent/internal/toolbridge"
 )
 
@@ -83,19 +84,40 @@ func (e *Executor) handle(ctx context.Context, execCtx *a2asrv.ExecutorContext) 
 	if e.authr != nil {
 		ctx = e.authr.Attach(ctx, execCtx, &req)
 	}
-	result, err := op.Call(ctx, req.Args)
+	result, err := op.Call(defimcp.WithCaller(ctx, req.Caller), req.Args)
 	response := Response{Skill: req.Skill, Tool: req.Tool}
 	if err != nil {
 		response.Error = err.Error()
 	} else {
 		response.OK = true
-		response.Result = result
+		response.Result = structuredResult(result)
 	}
 	encoded, err := json.Marshal(response)
 	if err != nil {
 		return "", fmt.Errorf("encode result: %w", err)
 	}
 	return string(encoded), nil
+}
+
+// structuredResult keeps private-MCP JSON payloads structured when they cross
+// the A2A boundary. The MCP SDK exposes tool output as text, but callers need
+// the actual payload object to feed the local build -> sign -> broadcast guard.
+// Ordinary human-readable strings remain strings.
+func structuredResult(result any) any {
+	text, ok := result.(string)
+	if !ok {
+		return result
+	}
+	var decoded any
+	if err := json.Unmarshal([]byte(text), &decoded); err != nil {
+		return result
+	}
+	switch decoded.(type) {
+	case map[string]any, []any:
+		return decoded
+	default:
+		return result
+	}
 }
 
 func messageText(msg *a2a.Message) string {

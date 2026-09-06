@@ -14,6 +14,7 @@ public_url  = "http://localhost:8083"
 
 [defi_mcp]
 url = "http://127.0.0.1:18081/mcp"
+auth_token = "replace-with-private-shared-secret"
 timeout = "90s"
 
 [llm]

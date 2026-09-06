@@ -29,8 +29,9 @@ type LLMConfig struct {
 	APIKeyEnv string `toml:"api_key_env"`
 }
 type DeFiMCPConfig struct {
-	URL     string   `toml:"url"`
-	Timeout Duration `toml:"timeout"`
+	URL       string   `toml:"url"`
+	AuthToken string   `toml:"auth_token"`
+	Timeout   Duration `toml:"timeout"`
 }
 type Duration time.Duration
 
@@ -69,6 +70,9 @@ func (c *Config) Validate() error {
 	}
 	if strings.TrimSpace(c.DeFiMCP.URL) == "" {
 		return fmt.Errorf("defi_mcp.url is required")
+	}
+	if strings.TrimSpace(c.DeFiMCP.AuthToken) == "" {
+		return fmt.Errorf("defi_mcp.auth_token is required")
 	}
 	if strings.TrimSpace(c.LLM.APIKeyEnv) == "" {
 		return fmt.Errorf("llm.api_key_env is required")

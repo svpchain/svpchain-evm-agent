@@ -20,6 +20,8 @@ SVPCHAIN_EVM_AGENT_PUBLIC_URL="https://evm-agent.svpchain.org"
 
 # Private DeFi MCP and the LLM used for natural-language A2A messages.
 SVPCHAIN_DEFI_MCP_URL="http://127.0.0.1:18081/mcp"
+# Must exactly match trusted_evm_agent_token in the private DeFi MCP config.
+SVPCHAIN_DEFI_MCP_AUTH_TOKEN="replace-with-private-shared-secret"
 SVPCHAIN_EVM_AGENT_LLM_API_KEY=""
 #SVPCHAIN_EVM_AGENT_LLM_PROVIDER="openai"
 #SVPCHAIN_EVM_AGENT_LLM_BASE_URL="https://api.openai.com"

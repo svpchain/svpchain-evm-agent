@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	ethereum "github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -131,15 +130,8 @@ type BroadcastOutput struct {
 }
 
 func (s *Service) Broadcast(ctx context.Context, in BroadcastInput) (BroadcastOutput, error) {
-	tenant, ok := tenantFrom(ctx)
-	if !ok {
-		return BroadcastOutput{}, fmt.Errorf("authentication required")
-	}
 	if in.ClientID == "" {
 		return BroadcastOutput{}, fmt.Errorf("missing client_id")
-	}
-	if err := s.claim(tenant.ID, in.ClientID); err != nil {
-		return BroadcastOutput{}, err
 	}
 	raw, err := hexutil.Decode(in.SignedTx.RawTxHex)
 	if err != nil {
@@ -148,17 +140,6 @@ func (s *Service) Broadcast(ctx context.Context, in BroadcastInput) (BroadcastOu
 	var tx types.Transaction
 	if err := tx.UnmarshalBinary(raw); err != nil {
 		return BroadcastOutput{}, fmt.Errorf("decode signed evm tx: %w", err)
-	}
-	from, err := types.Sender(types.LatestSignerForChainID(tx.ChainId()), &tx)
-	if err != nil {
-		return BroadcastOutput{}, fmt.Errorf("recover evm sender: %w", err)
-	}
-	owner, err := sdk.AccAddressFromBech32(tenant.Owner)
-	if err != nil {
-		return BroadcastOutput{}, fmt.Errorf("parse owner: %w", err)
-	}
-	if from != common.BytesToAddress(owner.Bytes()) {
-		return BroadcastOutput{}, fmt.Errorf("evm sender %s does not match authenticated owner", from.Hex())
 	}
 	if err := s.client.SendTransaction(ctx, &tx); err != nil {
 		return BroadcastOutput{}, fmt.Errorf("broadcast evm tx: %w", err)
@@ -177,9 +158,6 @@ type TxStatusOutput struct {
 }
 
 func (s *Service) TxStatus(ctx context.Context, in TxStatusInput) (TxStatusOutput, error) {
-	if _, ok := tenantFrom(ctx); !ok {
-		return TxStatusOutput{}, fmt.Errorf("authentication required")
-	}
 	receipt, err := s.client.TransactionReceipt(ctx, common.HexToHash(in.TxHash))
 	if errors.Is(err, ethereum.NotFound) {
 		return TxStatusOutput{TxHash: in.TxHash, Status: "pending"}, nil

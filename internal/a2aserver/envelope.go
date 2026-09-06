@@ -17,6 +17,9 @@ type Request struct {
 	// Bearer authenticates the caller when it cannot set an Authorization
 	// header. The header wins when both are present.
 	Bearer string `json:"bearer,omitempty"`
+	// Caller is an unsigned svp1 address supplied only for transaction
+	// construction. The private MCP does not treat it as an identity claim.
+	Caller string `json:"caller,omitempty"`
 	Intent string `json:"intent,omitempty"`
 
 	// Legacy read-layer fields, honored when Skill is svpchain-market-data

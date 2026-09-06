@@ -12,6 +12,9 @@ public_url  = "http://localhost:8083"
 [defi_mcp]
 # Private Streamable HTTP endpoint. The agent synchronizes tools/list at boot.
 url = "http://127.0.0.1:18081/mcp"
+# Shared secret accepted only by the private DeFi MCP. Generate a unique random
+# value and configure the same value as trusted_evm_agent_token there.
+auth_token = "replace-with-private-shared-secret"
 timeout = "90s"
 
 [llm]

@@ -6,27 +6,24 @@ catalog through A2A, and broadcasts EVM transactions that callers sign locally.
 It never receives a user's private key and cannot execute a user transaction on
 the user's behalf.
 
-Its own public tools are `auth_challenge`, `auth_verify`,
-`broadcast_evm_tx`, `evm_tx_status`, and `list_tools`. DeFi tools are supplied
-by the private MCP service and frozen into the Agent Card when the agent starts.
+Its own public tools are `broadcast_evm_tx`, `evm_tx_status`, and `list_tools`.
+DeFi tools are supplied by the private MCP service and frozen into the Agent
+Card when the agent starts.
 
 ## Write flow
 
 Every state-changing operation follows the same path:
 
 ```text
-auth_challenge -> local sign_challenge -> auth_verify
-  -> private DeFi MCP build_* -> local sign_evm_transaction -> broadcast_evm_tx
+private DeFi MCP build_* -> local sign_evm_transaction -> broadcast_evm_tx
 ```
 
-`build_*` returns an EVM transaction payload; the local signer owned by the
-caller signs it. `broadcast_evm_tx` verifies that the recovered EVM sender is
-the authenticated owner before sending it to the configured RPC. EVM gas is
-paid by that caller.
+`build_*` returns an EVM transaction payload; the local signer signs it before
+`broadcast_evm_tx` sends it to the configured RPC. EVM gas is paid by the
+signing account.
 
-The local `svpchain-agent` already provides `sign_challenge` and
-`sign_evm_transaction`. Its signer must be configured for the same Cosmos and
-EVM chain as this service.
+The local `svpchain-agent` provides `sign_evm_transaction`. Its signer must be
+configured for the same Cosmos and EVM chain as this service.
 
 ## Configuration
 
@@ -34,7 +31,10 @@ EVM chain as this service.
 go run ./cmd/svpchain-evm-agent -config cmd/svpchain-evm-agent/agent.toml.example
 ```
 
-`dex_chain.evm_rpc_url` and `defi_mcp.url` are required. Contract addresses,
+`dex_chain.evm_rpc_url`, `defi_mcp.url`, and `defi_mcp.auth_token` are required.
+`defi_mcp.auth_token` must match the private MCP's `trusted_evm_agent_token`;
+it authenticates the relay connection and is never sent to A2A callers.
+Contract addresses,
 token aliases, bridge routes, and faucet settings are configured exclusively in
 the private DeFi MCP service.
 
@@ -55,7 +55,7 @@ including the EVM RPC, private DeFi MCP endpoint, and LLM configuration:
 
 ```sh
 cp scripts/local-evm-agent.toml.example local-evm-agent.toml
-# Set the private MCP endpoint and LLM environment-variable name.
+# Set the private MCP endpoint, matching shared token, and LLM environment-variable name.
 ./scripts/local-evm-agent.sh config
 ```
 
