@@ -112,6 +112,21 @@ Set `SVPCHAIN_REGISTER_RPC` to use a public CometBFT RPC endpoint, or
 `SVPCHAIN_REGISTER_GRPC` for a reachable gRPC endpoint. `--register --dry-run`
 validates the Card and registration request without broadcasting.
 
+To remove the on-chain registration, use the same local config directory and
+owner key that registered it. The first command is a read-only preview; only
+the second signs and broadcasts. Deregistration removes the agent from chain
+discovery and begins bond unbonding, but leaves the deployed container, nginx,
+and DNS untouched.
+
+```sh
+./scripts/deregister.sh --config-dir ~/.config/svpchain-evm-agent-dev03
+./scripts/deregister.sh --config-dir ~/.config/svpchain-evm-agent-dev03 --confirm
+```
+
+For a post-migration registration whose DID has an allocation suffix, pass
+`--agent-id did:svp:<owner>:<index>`; the script verifies that the DID embeds
+the configured owner before it can submit anything.
+
 ## Development notes
 
 The private DeFi implementation belongs to `svpchain-defi-mcp`. This repository
