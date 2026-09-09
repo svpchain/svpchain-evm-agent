@@ -17,6 +17,7 @@ func TestSessionFailureRecognizesStreamableHTTPFailures(t *testing.T) {
 		"stream ID conflicts with ongoing stream",
 		"session is closed",
 		"session not found",
+		"connection closed: calling \"tools/call\": client is closing: hanging GET: failed to reconnect (session ID: abc): connection failed after 5 attempts: Get \"http://127.0.0.1:8766/\": consumer stopped",
 	} {
 		if !sessionFailure(fmt.Errorf("%s", message)) {
 			t.Errorf("sessionFailure(%q) = false", message)
@@ -71,5 +72,19 @@ func TestTrustedTransportAddsPrivateHeaders(t *testing.T) {
 	}
 	if got := req.Header.Get(agentTokenHeader); got != "" {
 		t.Fatalf("original request was mutated: %q", got)
+	}
+}
+
+func TestStreamableHTTPClientAllowsPersistentHangingGET(t *testing.T) {
+	client := newStreamableHTTPClient("private-token")
+	if client.Timeout != 0 {
+		t.Fatalf("streamable HTTP client timeout = %s, want 0 for persistent hanging GET", client.Timeout)
+	}
+	transport, ok := client.Transport.(trustedTransport)
+	if !ok {
+		t.Fatalf("transport = %T, want trustedTransport", client.Transport)
+	}
+	if transport.token != "private-token" {
+		t.Fatalf("transport token = %q", transport.token)
 	}
 }

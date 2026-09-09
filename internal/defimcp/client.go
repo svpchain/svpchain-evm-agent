@@ -64,9 +64,10 @@ type Client struct {
 	session *mcp.ClientSession
 	tools   map[string]Tool
 
-	endpoint  string
-	authToken string
-	timeout   time.Duration
+	serviceCtx context.Context
+	endpoint   string
+	authToken  string
+	timeout    time.Duration
 }
 
 func Connect(ctx context.Context, endpoint, authToken string, timeout time.Duration) (*Client, error) {
@@ -82,18 +83,20 @@ func Connect(ctx context.Context, endpoint, authToken string, timeout time.Durat
 	if err != nil {
 		return nil, err
 	}
-	return &Client{session: session, tools: tools, endpoint: endpoint, authToken: authToken, timeout: timeout}, nil
+	return &Client{session: session, tools: tools, serviceCtx: ctx, endpoint: endpoint, authToken: authToken, timeout: timeout}, nil
 }
 
 func connectSession(ctx context.Context, endpoint, authToken string, timeout time.Duration) (*mcp.ClientSession, map[string]Tool, error) {
 	client := mcp.NewClient(&mcp.Implementation{Name: "svpchain-evm-agent", Version: "v0.2.0"}, nil)
 	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{
-		Endpoint: endpoint, HTTPClient: &http.Client{Timeout: timeout, Transport: trustedTransport{token: authToken, base: http.DefaultTransport}},
+		Endpoint: endpoint, HTTPClient: newStreamableHTTPClient(authToken),
 	}, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("connect private defi mcp: %w", err)
 	}
-	listed, err := session.ListTools(ctx, nil)
+	listCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	listed, err := session.ListTools(listCtx, nil)
 	if err != nil {
 		_ = session.Close()
 		return nil, nil, fmt.Errorf("list private defi mcp tools: %w", err)
@@ -116,6 +119,13 @@ func connectSession(ctx context.Context, endpoint, authToken string, timeout tim
 		return nil, nil, fmt.Errorf("private defi mcp returned no tools")
 	}
 	return session, tools, nil
+}
+
+func newStreamableHTTPClient(authToken string) *http.Client {
+	// A Streamable HTTP session owns a persistent hanging GET. http.Client.Timeout
+	// applies to the entire response body, so using it here would periodically
+	// cancel that GET and tear down an otherwise healthy session.
+	return &http.Client{Transport: trustedTransport{token: authToken, base: http.DefaultTransport}}
 }
 
 func (c *Client) Tools() []Tool {
@@ -162,7 +172,9 @@ func (c *Client) callTool(ctx context.Context, name string, args map[string]any)
 	if c.session == nil {
 		return nil, fmt.Errorf("private defi mcp session is not connected")
 	}
-	return c.session.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
+	callCtx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+	return c.session.CallTool(callCtx, &mcp.CallToolParams{Name: name, Arguments: args})
 }
 
 // reconnect replaces a broken Streamable HTTP session without changing the
@@ -174,7 +186,7 @@ func (c *Client) reconnect(ctx context.Context) error {
 	if old != nil {
 		_ = old.Close()
 	}
-	session, tools, err := connectSession(ctx, c.endpoint, c.authToken, c.timeout)
+	session, tools, err := connectSession(c.serviceCtx, c.endpoint, c.authToken, c.timeout)
 	if err != nil {
 		return err
 	}
@@ -208,6 +220,10 @@ func sessionFailure(err error) bool {
 		strings.Contains(message, "stream id conflicts") ||
 		strings.Contains(message, "connection closed") ||
 		strings.Contains(message, "broken session") ||
+		strings.Contains(message, "client is closing") ||
+		strings.Contains(message, "hanging get") ||
+		strings.Contains(message, "failed to reconnect") ||
+		strings.Contains(message, "consumer stopped") ||
 		strings.Contains(message, "session is closed") ||
 		strings.Contains(message, "session not found")
 }
